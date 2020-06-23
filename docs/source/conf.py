@@ -44,10 +44,10 @@ extensions = [
     'sphinx.ext.intersphinx',
     'sphinx.ext.mathjax',
     'sphinx.ext.viewcode',
+    'sphinx.ext.napoleon',
     'IPython.sphinxext.ipython_directive',
     'IPython.sphinxext.ipython_console_highlighting',
     'matplotlib.sphinxext.plot_directive',
-    'numpydoc',
     'sphinx_copybutton',
     'sphinx_gallery.gen_gallery',
     'ext.build_modref_templates',
@@ -79,7 +79,7 @@ master_doc = 'index'
 
 # General information about the project.
 project = 'FURY'
-copyright = '2010-{0}, FURY'.format(datetime.now().year)
+copyright = '2018-{0}, FURY'.format(datetime.now().year)
 author = 'FURY'
 
 # The version info for the project you're documenting, acts as replacement for
@@ -235,5 +235,5 @@ intersphinx_mapping = {
     'pandas': ('https://pandas.pydata.org/pandas-docs/stable', None),
     'matplotlib': ('https://matplotlib.org', None),
     'dipy': ('https://dipy.org/documentation/latest',
-             'https://dipy.org/documentation/1.0.0./objects.inv/'),
+             'https://dipy.org/documentation/latest/objects.inv/'),
 }

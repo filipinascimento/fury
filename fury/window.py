@@ -48,9 +48,10 @@ class Scene(vtk.vtkRenderer):
             else:
                 self.AddActor(actor)
 
-    def rm(self, actor):
-        """Remove a specific actor."""
-        self.RemoveActor(actor)
+    def rm(self, *actors):
+        """Remove more than once actors at once."""
+        for actor in actors:
+            self.RemoveActor(actor)
 
     def clear(self):
         """Remove all actors from the scene."""
@@ -61,7 +62,7 @@ class Scene(vtk.vtkRenderer):
         self.RemoveAllViewProps()
 
     def projection(self, proj_type='perspective'):
-        """Deside between parallel or perspective projection.
+        """Decide between parallel or perspective projection.
 
         Parameters
         ----------
@@ -461,14 +462,9 @@ class ShowManager(object):
 
         self.window.AddRenderer(scene)
 
-        if self.title == 'FURY':
-            self.window.SetWindowName(title + ' ' + fury_version)
-        else:
-            self.window.SetWindowName(title)
         self.window.SetSize(size[0], size[1])
 
         if self.order_transparent:
-
             antialiasing(self.scene, self.window,
                          multi_samples, max_peels, occlusion_ratio)
 
@@ -499,6 +495,11 @@ class ShowManager(object):
     def start(self):
         """Start interaction."""
         try:
+            self.render()
+            if self.title.upper() == "FURY":
+                self.window.SetWindowName(self.title + " " + fury_version)
+            else:
+                self.window.SetWindowName(self.title)
             self.iren.Start()
         except AttributeError:
             self.__init__(self.scene, self.title, size=self.size,
@@ -508,6 +509,10 @@ class ShowManager(object):
                           interactor_style=self.interactor_style)
             self.initialize()
             self.render()
+            if self.title.upper() == "FURY":
+                self.window.SetWindowName(self.title + " " + fury_version)
+            else:
+                self.window.SetWindowName(self.title)
             self.iren.Start()
 
         self.window.RemoveRenderer(self.scene)
@@ -859,9 +864,9 @@ def record(scene=None, cam_pos=None, cam_focal=None, cam_view=None,
 
         arr = numpy_support.vtk_to_numpy(renderLarge.GetOutput().GetPointData()
                                          .GetScalars())
-        h, w, _ = renderLarge.GetOutput().GetDimensions()
+        w, h, _ = renderLarge.GetOutput().GetDimensions()
         components = renderLarge.GetOutput().GetNumberOfScalarComponents()
-        arr = arr.reshape((w, h, components))
+        arr = np.flipud(arr.reshape((h, w, components)))
         save_image(arr, filename)
 
         ang = +az_ang
@@ -869,7 +874,7 @@ def record(scene=None, cam_pos=None, cam_focal=None, cam_view=None,
 
 def antialiasing(scene, win, multi_samples=8, max_peels=4,
                  occlusion_ratio=0.0):
-    """ Enable anti-aliasing and ordered transparency
+    """Enable anti-aliasing and ordered transparency.
 
     Parameters
     ----------

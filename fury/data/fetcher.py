@@ -11,10 +11,7 @@ from shutil import copyfileobj
 import tarfile
 import zipfile
 
-if sys.version_info[0] < 3:
-    from urllib2 import urlopen
-else:
-    from urllib.request import urlopen
+from urllib.request import urlopen
 
 # Set a user-writeable file-system location to put files:
 if 'FURY_HOME' in os.environ:
@@ -28,6 +25,12 @@ UW_RW_URL = \
 
 FURY_DATA_URL = \
     "https://raw.githubusercontent.com/fury-gl/fury-data/master/examples/"
+
+MODEL_DATA_URL = \
+    "https://raw.githubusercontent.com/fury-gl/fury-data/master/models/"
+
+TEXTURE_DATA_URL = \
+    "https://raw.githubusercontent.com/fury-gl/fury-data/master/textures/"
 
 
 class FetcherError(Exception):
@@ -76,16 +79,16 @@ def _already_there_msg(folder):
 
 
 def _get_file_sha(filename):
-    """Generates SHA checksum for the entire file in blocks of 256
+    """Generate SHA checksum for the entire file in blocks of 256.
 
     Parameters
     ----------
-    filename: str
+    filename : str
         The path to the file whose sha checksum is to be generated
 
     Returns
     -------
-    sha256_data: str
+    sha256_data : str
         The computed sha hash from the input file
 
     """
@@ -97,13 +100,13 @@ def _get_file_sha(filename):
 
 
 def check_sha(filename, stored_sha256=None):
-    """Checks the generated sha checksum.
+    """Check the generated sha checksum.
 
     Parameters
     ----------
-    filename: str
+    filename : str
         The path to the file whose checksum is to be compared
-    stored_sha256: str, optional
+    stored_sha256 : str, optional
         Used to verify the generated SHA checksum.
         Default: None, checking is skipped
 
@@ -139,7 +142,7 @@ def _get_file_data(fname, url):
 
 
 def fetch_data(files, folder, data_size=None):
-    """Downloads files to folder and checks their sha checksums.
+    """Download files to folder and checks their sha checksums.
 
     Parameters
     ----------
@@ -257,34 +260,77 @@ def _make_fetcher(name, folder, baseurl, remote_fnames, local_fnames,
     return fetcher
 
 
-fetch_viz_icons = _make_fetcher("fetch_viz_icons",
-                                pjoin(fury_home, "icons"),
-                                UW_RW_URL + "1773/38478/",
-                                ['icomoon.tar.gz'],
-                                ['icomoon.tar.gz'],
-                                ['BC1FEEA6F58BA3601D6A0B029EB8DFC5F352E21F2A16BA41099A96AA3F5A4735'],
-                                data_size="12KB",
-                                doc="Download icons for fury",
-                                unzip=True
-                                )
+fetch_viz_icons = _make_fetcher(
+    "fetch_viz_icons",
+    pjoin(fury_home, "icons"),
+    UW_RW_URL + "1773/38478/",
+    ['icomoon.tar.gz'],
+    ['icomoon.tar.gz'],
+    ['BC1FEEA6F58BA3601D6A0B029EB8DFC5F352E21F2A16BA41099A96AA3F5A4735'],
+    data_size="12KB",
+    doc="Download icons for fury",
+    unzip=True
+    )
 
 
-fetch_viz_wiki_nw = _make_fetcher("fetch_viz_wiki_nw",
-                                  pjoin(fury_home, "examples", "wiki_nw"),
-                                  FURY_DATA_URL,
-                                  ['wiki_categories.txt', 'wiki_edges.txt',
-                                   'wiki_positions.txt'],
-                                  ['wiki_categories.txt', 'wiki_edges.txt',
-                                   'wiki_positions.txt'],
-                                  ['1679241B13D2FD01209160F0C186E14AB55855478300B713D5369C12854CFF82',
-                                   '702EE8713994243C8619A29C9ECE32F95305737F583B747C307500F3EC4A6B56',
-                                   '044917A8FBD0EB980D93B6C406A577BEA416FA934E897C26C87E91C218EF4432'],
-                                  doc="Download the following wiki information"
-                                      "Interdisciplinary map of the journals",
-                                  msg=("More information about complex "
-                                       "networks can be found in this papers:"
-                                       " https://arxiv.org/abs/0711.3199")
-                                  )
+fetch_viz_wiki_nw = _make_fetcher(
+    "fetch_viz_wiki_nw",
+    pjoin(fury_home, "examples", "wiki_nw"),
+    FURY_DATA_URL,
+    ['wiki_categories.txt', 'wiki_edges.txt',
+     'wiki_positions.txt'],
+    ['wiki_categories.txt', 'wiki_edges.txt',
+     'wiki_positions.txt'],
+    ['1679241B13D2FD01209160F0C186E14AB55855478300B713D5369C12854CFF82',
+     '702EE8713994243C8619A29C9ECE32F95305737F583B747C307500F3EC4A6B56',
+     '044917A8FBD0EB980D93B6C406A577BEA416FA934E897C26C87E91C218EF4432'],
+    doc="Download the following wiki information"
+        "Interdisciplinary map of the journals",
+    msg=("More information about complex "
+         "networks can be found in this papers:"
+         " https://arxiv.org/abs/0711.3199")
+    )
+
+fetch_viz_models = _make_fetcher(
+    "fetch_viz_models",
+    pjoin(fury_home, "models"),
+    MODEL_DATA_URL,
+    ['utah.obj', 'suzanne.obj'],
+    ['utah.obj', 'suzanne.obj'],
+    ['0B50F12CEDCDC27377AC702B1EE331223BECEC59593B3F00A9E06B57A9C1B7C3',
+     'BB4FF4E65D65D71D53000E06D2DC7BF89B702223657C1F64748811A3A6C8D621'],
+    doc=" Download the models for shader tutorial"
+    )
+
+fetch_viz_textures = _make_fetcher(
+    "fetch_viz_textures",
+    pjoin(fury_home, "textures"),
+    TEXTURE_DATA_URL,
+    ['1_earth_8k.jpg', '2_no_clouds_8k.jpg',
+     '5_night_8k.jpg', 'earth.ppm',
+     'jupiter.jpg', 'masonry.bmp',
+     'skybox-nx.jpg', 'skybox-ny.jpg',
+     'skybox-px.jpg', 'skybox-py.jpg',
+     'skybox-pz.jpg'],
+    ['1_earth_8k.jpg', '2_no_clouds_8k.jpg',
+     '5_night_8k.jpg', 'earth.ppm',
+     'jupiter.jpg', 'masonry.bmp',
+     'skybox-nx.jpg', 'skybox-ny.jpg',
+     'skybox-px.jpg', 'skybox-py.jpg',
+     'skybox-pz.jpg'],
+    ['0D66DC62768C43D763D3288CE67128AAED27715B11B0529162DC4117F710E26F',
+     '5CF740C72287AF7B3ACCF080C3951944ADCB1617083B918537D08CBD9F2C5465',
+     'DF443F3E20C7724803690A350D9F6FDB36AD8EBC011B0345FB519A8B321F680A',
+     '34CE9AD183D7C7B11E2F682D7EBB84C803E661BE09E01ADB887175AE60C58156',
+     '5DF6A384E407BD0D5F18176B7DB96AAE1EEA3CFCFE570DDCE0D34B4F0E493668',
+     '045E30B2ABFEAE6318C2CF955040C4A37E6DE595ACE809CE6766D397C0EE205D',
+     '12B1CE6C91AA3AAF258A8A5944DF739A6C1CC76E89D4D7119D1F795A30FC1BF2',
+     'E18FE2206B63D3DF2C879F5E0B9937A61D99734B6C43AC288226C58D2418D23E',
+     'BF20ACD6817C9E7073E485BBE2D2CE56DACFF73C021C2B613BA072BA2DF2B754',
+     '16F0D692AF0B80E46929D8D8A7E596123C76729CC5EB7DFD1C9184B115DD143A',
+     'B850B5E882889DF26BE9289D7C25BA30524B37E56BC2075B968A83197AD977F3'],
+    doc="Download textures for fury"
+    )
 
 
 def read_viz_icons(style='icomoon', fname='infinity.png'):
@@ -305,4 +351,42 @@ def read_viz_icons(style='icomoon', fname='infinity.png'):
 
     """
     folder = pjoin(fury_home, 'icons', style)
+    return pjoin(folder, fname)
+
+
+def read_viz_models(fname):
+    """Read specific model.
+
+    Parameters
+    ----------
+    fname : str
+        Filename of the model.
+        This should be found in folder HOME/.fury/models/.
+
+    Returns
+    --------
+    path : str
+        Complete path of models.
+
+    """
+    folder = pjoin(fury_home, 'models')
+    return pjoin(folder, fname)
+
+
+def read_viz_textures(fname):
+    """Read specific texture.
+
+    Parameters
+    ----------
+    fname: str
+        Filename of the texture.
+        This should be found in folder HOME/.fury/textures/.
+
+    Returns
+    -------
+    path : str
+        Complete path of models.
+
+    """
+    folder = pjoin(fury_home, 'textures')
     return pjoin(folder, fname)

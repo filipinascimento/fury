@@ -1,5 +1,5 @@
-.. image:: https://travis-ci.org/fury-gl/fury.svg?branch=master
-        :target: https://travis-ci.org/fury-gl/fury
+.. image:: https://travis-ci.com/fury-gl/fury.svg?branch=master
+        :target: https://travis-ci.com/fury-gl/fury
 
 .. image:: https://dev.azure.com/fury-gl/fury/_apis/build/status/fury-gl.fury?branchName=master
         :target: https://dev.azure.com/fury-gl/fury/_build/latest?definitionId=1&branchName=master
@@ -60,13 +60,17 @@ Development
 
     pip install -r requirements/default.txt
 
-**Step 3.** Install fury via::
+**Step 3.** Install fury 
+
+As a `local project installation <https://pip.pypa.io/en/stable/reference/pip_install/#id44>`__ using::
 
     pip install .
 
-or::
+Or as an `"editable" installation <https://pip.pypa.io/en/stable/reference/pip_install/#id44>`__ using::
 
     pip install -e .
+
+**If you are developing fury you should go with editable installation.**
 
 **Step 4:** Enjoy!
 

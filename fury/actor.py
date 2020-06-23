@@ -1,8 +1,11 @@
+"""Module that provide actors to render."""
+
+import os.path as op
 import numpy as np
 import vtk
 from vtk.util import numpy_support
 
-import fury.shaders
+import fury.shaders as fs
 from fury import layout
 from fury.colormap import colormap_lookup_table, create_colormap, orient2rgb
 from fury.utils import (lines_to_vtk_polydata, set_input, apply_affine,
@@ -31,13 +34,13 @@ def slicer(data, affine=None, value_range=None, opacity=1.,
         value_range[1]) to (0, 255).
     opacity : float, optional
         Opacity of 0 means completely transparent and 1 completely visible.
-    lookup_colormap : vtkLookupTable
+    lookup_colormap : vtkLookupTable, optional
         If None (default) then a grayscale map is created.
-    interpolation : string
+    interpolation : string, optional
         If 'linear' (default) then linear interpolation is used on the final
         texture mapping. If 'nearest' then nearest neighbor interpolation is
         used on the final texture mapping.
-    picking_tol : float
+    picking_tol : float, optional
         The tolerance for the vtkCellPicker, specified as a fraction of
         rendering window size.
 
@@ -295,20 +298,7 @@ def surface(vertices, faces=None, colors=None, smooth=None, subdivision=3):
         tri = Delaunay(vertices[:, [0, 1]])
         faces = np.array(tri.simplices, dtype='i8')
 
-    if faces.shape[1] == 3:
-        triangles = np.empty((faces.shape[0], 4), dtype=np.int64)
-        triangles[:, -3:] = faces
-        triangles[:, 0] = 3
-    else:
-        triangles = faces
-
-    if not triangles.flags['C_CONTIGUOUS'] or triangles.dtype != 'int64':
-        triangles = np.ascontiguousarray(triangles, 'int64')
-
-    cells = vtk.vtkCellArray()
-    cells.SetCells(triangles.shape[0],
-                   numpy_support.numpy_to_vtkIdTypeArray(triangles, deep=True))
-    triangle_poly_data.SetPolys(cells)
+    set_polydata_triangles(triangle_poly_data, faces)
 
     clean_poly_data = vtk.vtkCleanPolyData()
     clean_poly_data.SetInputData(triangle_poly_data)
@@ -364,8 +354,8 @@ def contour_from_roi(data, affine=None,
     """
     if data.ndim != 3:
         raise ValueError('Only 3D arrays are currently supported.')
-    else:
-        nb_components = 1
+
+    nb_components = 1
 
     data = (data > 0) * 1
     vol = np.interp(data, xp=[data.min(), data.max()], fp=[0, 255])
@@ -422,7 +412,6 @@ def contour_from_roi(data, affine=None,
     skin_extractor.SetInputData(image_resliced.GetOutput())
 
     skin_extractor.SetValue(0, 1)
-
     skin_normals = vtk.vtkPolyDataNormals()
     skin_normals.SetInputConnection(skin_extractor.GetOutputPort())
     skin_normals.SetFeatureAngle(60.0)
@@ -434,14 +423,65 @@ def contour_from_roi(data, affine=None,
     skin_actor = vtk.vtkActor()
 
     skin_actor.SetMapper(skin_mapper)
-    skin_actor.GetProperty().SetOpacity(opacity)
-
     skin_actor.GetProperty().SetColor(color[0], color[1], color[2])
+    skin_actor.GetProperty().SetOpacity(opacity)
 
     return skin_actor
 
 
-def streamtube(lines, colors="RGB", opacity=1, linewidth=0.1, tube_sides=9,
+def contour_from_label(data, affine=None, color=None):
+    """Generate surface actor from a labeled Array.
+
+    The color and opacity of individual surfaces can be customized.
+
+    Parameters
+    ----------
+    data : array, shape (X, Y, Z)
+        A labeled array file that will be binarized and displayed.
+    affine : array, shape (4, 4)
+        Grid to space (usually RAS 1mm) transformation matrix. Default is None.
+        If None then the identity matrix is used.
+    color : (N, 3) or (N, 4) ndarray
+        RGB/RGBA values in [0,1]. Default is None.
+        If None then random colors are used.
+        Alpha channel is set to 1 by default.
+
+    Returns
+    -------
+    contour_assembly : vtkAssembly
+        Array surface object displayed in space
+        coordinates as calculated by the affine parameter
+        in the order of their roi ids.
+    """
+
+    unique_roi_id = np.delete(np.unique(data), 0)
+
+    nb_surfaces = len(unique_roi_id)
+
+    unique_roi_surfaces = vtk.vtkAssembly()
+
+    if color is None:
+        color = np.random.rand(nb_surfaces, 3)
+    elif color.shape != (nb_surfaces, 3) and color.shape != (nb_surfaces, 4):
+        raise ValueError("Incorrect color array shape")
+
+    if color.shape == (nb_surfaces, 4):
+        opacity = color[:, -1]
+        color = color[:, :-1]
+    else:
+        opacity = np.ones((nb_surfaces, 1)).astype(np.float)
+
+    for i, roi_id in enumerate(unique_roi_id):
+        roi_data = np.isin(data, roi_id).astype(np.int)
+        roi_surface = contour_from_roi(roi_data, affine,
+                                       color=color[i],
+                                       opacity=opacity[i])
+        unique_roi_surfaces.AddPart(roi_surface)
+
+    return unique_roi_surfaces
+
+
+def streamtube(lines, colors=None, opacity=1, linewidth=0.1, tube_sides=9,
                lod=True, lod_points=10 ** 4, lod_points_size=3,
                spline_subdiv=None, lookup_colormap=None):
     """Use streamtubes to visualize polylines
@@ -451,9 +491,9 @@ def streamtube(lines, colors="RGB", opacity=1, linewidth=0.1, tube_sides=9,
     lines : list
         list of N curves represented as 2D ndarrays
 
-    colors : array (N, 3), list of arrays, tuple (3,), array (K,), "RGB"
-        If None or False, no coloring is done
-        If "RGB" then a standard orientation colormap is used for every line.
+    colors : array (N, 3), list of arrays, tuple (3,), array (K,)
+        If None or False, a standard orientation colormap is used for every
+        line.
         If one tuple of color is used. Then all streamlines will have the same
         colour.
         If an array (N, 3) is given, where N is equal to the number of lines.
@@ -471,23 +511,23 @@ def streamtube(lines, colors="RGB", opacity=1, linewidth=0.1, tube_sides=9,
         If an array (X, Y, Z) or (X, Y, Z, 3) is given then the values for the
         colormap are interpolated automatically using trilinear interpolation.
 
-    opacity : float
+    opacity : float, optional
         Takes values from 0 (fully transparent) to 1 (opaque). Default is 1.
-    linewidth : float
+    linewidth : float, optional
         Default is 0.01.
-    tube_sides : int
+    tube_sides : int, optional
         Default is 9.
-    lod : bool
+    lod : bool, optional
         Use vtkLODActor(level of detail) rather than vtkActor. Default is True.
         Level of detail actors do not render the full geometry when the
         frame rate is low.
-    lod_points : int
+    lod_points : int, optional
         Number of points to be used when LOD is in effect. Default is 10000.
-    lod_points_size : int
+    lod_points_size : int, optional
         Size of points when lod is in effect. Default is 3.
-    spline_subdiv : int
+    spline_subdiv : int, optional
         Number of splines subdivision to smooth streamtubes. Default is None.
-    lookup_colormap : vtkLookupTable
+    lookup_colormap : vtkLookupTable, optional
         Add a default lookup table to the colormap. Default is None which calls
         :func:`fury.actor.colormap_lookup_table`.
 
@@ -586,7 +626,7 @@ def streamtube(lines, colors="RGB", opacity=1, linewidth=0.1, tube_sides=9,
     return actor
 
 
-def line(lines, colors="RGB", opacity=1, linewidth=1,
+def line(lines, colors=None, opacity=1, linewidth=1,
          spline_subdiv=None, lod=True, lod_points=10 ** 4, lod_points_size=3,
          lookup_colormap=None, depth_cue=False, fake_tube=False):
     """ Create an actor for one or more lines.
@@ -595,9 +635,9 @@ def line(lines, colors="RGB", opacity=1, linewidth=1,
     ------------
     lines :  list of arrays
 
-    colors : array (N, 3), list of arrays, tuple (3,), array (K,), "RGB"
-        If None or False, no coloring is done
-        If "RGB" then a standard orientation colormap is used for every line.
+    colors : array (N, 3), list of arrays, tuple (3,), array (K,)
+        If None or False, a standard orientation colormap is used for every
+        line.
         If one tuple of color is used. Then all streamlines will have the same
         colour.
         If an array (N, 3) is given, where N is equal to the number of lines.
@@ -623,21 +663,21 @@ def line(lines, colors="RGB", opacity=1, linewidth=1,
     spline_subdiv : int, optional
         Number of splines subdivision to smooth streamtubes. Default is None
         which means no subdivision.
-    lod : bool
+    lod : bool, optional
         Use vtkLODActor(level of detail) rather than vtkActor. Default is True.
         Level of detail actors do not render the full geometry when the
         frame rate is low.
-    lod_points : int
+    lod_points : int, optional
         Number of points to be used when LOD is in effect. Default is 10000.
     lod_points_size : int
         Size of points when lod is in effect. Default is 3.
-    lookup_colormap : bool, optional
+    lookup_colormap : vtkLookupTable, optional
         Add a default lookup table to the colormap. Default is None which calls
         :func:`fury.actor.colormap_lookup_table`.
-    depth_cue : boolean
+    depth_cue : boolean, optional
         Add a size depth cue so that lines shrink with distance to the camera.
         Works best with linewidth <= 1.
-    fake_tube: boolean
+    fake_tube: boolean, optional
         Add shading to lines to approximate the look of tubes.
 
     Returns
@@ -674,7 +714,7 @@ def line(lines, colors="RGB", opacity=1, linewidth=1,
     poly_mapper.Update()
 
     if depth_cue:
-        poly_mapper.SetGeometryShaderCode(fury.shaders.load("line.geom"))
+        poly_mapper.SetGeometryShaderCode(fs.load("line.geom"))
 
         @vtk.calldata_type(vtk.VTK_OBJECT)
         def vtkShaderCallback(_caller, _event, calldata=None):
@@ -927,14 +967,6 @@ def _odf_slicer_mapper(odfs, affine=None, mask=None, sphere=None, scale=2.2,
     all_xyz = np.ascontiguousarray(np.concatenate(all_xyz))
     all_xyz_vtk = numpy_support.numpy_to_vtk(all_xyz, deep=True)
 
-    all_faces = np.concatenate(all_faces)
-    all_faces = np.hstack((3 * np.ones((len(all_faces), 1)),
-                           all_faces))
-    ncells = len(all_faces)
-
-    all_faces = np.ascontiguousarray(all_faces.ravel(), dtype='i8')
-    all_faces_vtk = numpy_support.numpy_to_vtkIdTypeArray(all_faces,
-                                                          deep=True)
     if global_cm:
         all_ms = np.ascontiguousarray(
             np.concatenate(all_ms), dtype='f4')
@@ -942,8 +974,7 @@ def _odf_slicer_mapper(odfs, affine=None, mask=None, sphere=None, scale=2.2,
     points = vtk.vtkPoints()
     points.SetData(all_xyz_vtk)
 
-    cells = vtk.vtkCellArray()
-    cells.SetCells(ncells, all_faces_vtk)
+    all_faces = np.concatenate(all_faces)
 
     if global_cm:
         if colormap is None:
@@ -973,7 +1004,7 @@ def _odf_slicer_mapper(odfs, affine=None, mask=None, sphere=None, scale=2.2,
 
     polydata = vtk.vtkPolyData()
     polydata.SetPoints(points)
-    polydata.SetPolys(cells)
+    set_polydata_triangles(polydata, all_faces)
 
     polydata.GetPointData().SetScalars(vtk_colors)
 
@@ -1149,20 +1180,10 @@ def _tensor_slicer_mapper(evals, evecs, affine=None, mask=None, sphere=None,
     all_xyz = np.ascontiguousarray(np.concatenate(all_xyz))
     all_xyz_vtk = numpy_support.numpy_to_vtk(all_xyz, deep=True)
 
-    all_faces = np.concatenate(all_faces)
-    all_faces = np.hstack((3 * np.ones((len(all_faces), 1)),
-                           all_faces))
-    ncells = len(all_faces)
-
-    all_faces = np.ascontiguousarray(all_faces.ravel(), dtype='i8')
-    all_faces_vtk = numpy_support.numpy_to_vtkIdTypeArray(all_faces,
-                                                          deep=True)
-
     points = vtk.vtkPoints()
     points.SetData(all_xyz_vtk)
 
-    cells = vtk.vtkCellArray()
-    cells.SetCells(ncells, all_faces_vtk)
+    all_faces = np.concatenate(all_faces)
 
     cols = np.ascontiguousarray(
         np.reshape(cols, (cols.shape[0] * cols.shape[1],
@@ -1177,7 +1198,7 @@ def _tensor_slicer_mapper(evals, evecs, affine=None, mask=None, sphere=None,
 
     polydata = vtk.vtkPolyData()
     polydata.SetPoints(points)
-    polydata.SetPolys(cells)
+    set_polydata_triangles(polydata, all_faces)
     polydata.GetPointData().SetScalars(vtk_colors)
 
     mapper = vtk.vtkPolyDataMapper()
@@ -1585,7 +1606,7 @@ def cube(centers, directions, colors, heights=1,
     >>> dirs = np.random.rand(5, 3)
     >>> heights = np.random.rand(5)
     >>> cube_actor = actor.cube(centers, dirs, (1, 1, 1), heights=heights)
-    >>> scene.add(cubeactor)
+    >>> scene.add(cube_actor)
     >>> # window.show(scene)
 
     """
@@ -1704,6 +1725,86 @@ def cone(centers, directions, colors, heights=1., resolution=10,
     return actor
 
 
+def octagonalprism(centers, directions=(1, 0, 0), colors=(255, 0, 0),
+                   scale=1):
+    """Visualize one or many octagonal prisms with different features.
+
+    Parameters
+    ----------
+    centers : ndarray, shape (N, 3)
+        Octagonal prism positions
+    directions : ndarray, shape (N, 3)
+        The orientation vector of the octagonal prism.
+    colors : ndarray (N,3) or (N, 4) or tuple (3,) or tuple (4,)
+        RGB or RGBA (for opacity) R, G, B and A should be at the range [0, 1]
+    scale : int or ndarray (N,3) or tuple (3,), optional
+        Octagonal prism size on each direction (x, y), default(1)
+
+    Returns
+    -------
+    vtkActor
+
+    Examples
+    --------
+    >>> from fury import window, actor
+    >>> scene = window.Scene()
+    >>> centers = np.random.rand(3, 3)
+    >>> dirs = np.random.rand(3, 3)
+    >>> colors = np.random.rand(3, 3)*255
+    >>> scales = np.random.rand(3, 1)
+    >>> actor = actor.octagonalprism(centers, dirs, colors, scales)
+    >>> scene.add(actor)
+    >>> # window.show(scene)
+
+    """
+    verts, faces = fp.prim_octagonalprism()
+    res = fp.repeat_primitive(verts, faces, directions=directions,
+                              centers=centers, colors=colors, scale=scale)
+
+    big_verts, big_faces, big_colors, _ = res
+    oct_actor = get_actor_from_primitive(big_verts, big_faces, big_colors)
+    return oct_actor
+
+
+def frustum(centers, directions=(1, 0, 0), colors=(0, 255, 0), scale=1):
+    """Visualize one or many frustum pyramids with different features.
+
+    Parameters
+    ----------
+    centers : ndarray, shape (N, 3)
+        Frustum pyramid positions
+    directions : ndarray, shape (N, 3)
+        The orientation vector of the frustum pyramid.
+    colors : ndarray (N,3) or (N, 4) or tuple (3,) or tuple (4,)
+        RGB or RGBA (for opacity) R, G, B and A should be at the range [0, 1]
+    heights : int or ndarray (N,3) or tuple (3,), optional
+        Frustum pyramid size on each direction (x, y), default(1)
+    Returns
+    -------
+    vtkActor
+
+    Examples
+    --------
+    >>> from fury import window, actor
+    >>> scene = window.Scene()
+    >>> centers = np.random.rand(4, 3)
+    >>> dirs = np.random.rand(4, 3)
+    >>> colors = np.random.rand(4, 3)*255
+    >>> scales = np.random.rand(4, 1)
+    >>> actor = actor.frustum(centers, dirs, colors, scales)
+    >>> scene.add(actor)
+    >>> # window.show(scene)
+
+    """
+    verts, faces = fp.prim_frustum()
+    res = fp.repeat_primitive(verts, faces, directions=directions,
+                              centers=centers, colors=colors, scale=scale)
+
+    big_verts, big_faces, big_colors, _ = res
+    frustum_actor = get_actor_from_primitive(big_verts, big_faces, big_colors)
+    return frustum_actor
+
+
 def superquadric(centers, roundness=(1, 1), directions=(1, 0, 0),
                  colors=(255, 0, 0), scale=1):
     """Visualize one or many superquadrics with different features.
@@ -1756,10 +1857,115 @@ def superquadric(centers, roundness=(1, 1), directions=(1, 0, 0),
                                        centers=centers,
                                        func_args=roundness,
                                        directions=directions,
-                                       colors=colors)
+                                       colors=colors, scale=scale)
 
-    big_verts, big_faces, big_colors = res
+    big_verts, big_faces, big_colors, _ = res
     actor = get_actor_from_primitive(big_verts, big_faces, big_colors)
+    return actor
+
+
+def billboard(centers, colors=(0, 255, 0), scale=1, vs_dec=None, vs_impl=None,
+              fs_dec=None, fs_impl=None, gs_dec=None, gs_impl=None):
+    """Create a billboard actor.
+
+    Billboards are 2D elements incrusted in a 3D world. It offers you the
+    possibility to draw differents shapes/elements at the shader level.
+
+    Parameters
+    ----------
+    centers : ndarray, shape (N, 3)
+        Superquadrics positions
+    colors : ndarray (N,3) or (N, 4) or tuple (3,) or tuple (4,)
+        RGB or RGBA (for opacity) R, G, B and A should be at the range [0, 1]
+    scale : ndarray, shape (N) or (N,3) or float or int, optional
+        The height of the cone.
+    vs_dec : str or list of str, optional
+        vertex shaders code that contains all variable/function delarations
+    vs_impl : str or list of str, optional
+        vertex shaders code that contains all variable/function implementation
+    fs_dec : str or list of str, optional
+        Fragment shaders code that contains all variable/function delarations
+    fs_impl : str or list of str, optional
+        Fragment shaders code that contains all variable/function
+        implementation
+    gs_dec : str or list of str, optional
+        Geometry shaders code that contains all variable/function delarations
+    gs_impl : str or list of str, optional
+        Geometry shaders code that contains all variable/function
+        mplementation
+
+    Returns
+    -------
+    vtkActor
+
+    """
+    verts, faces = fp.prim_square()
+    res = fp.repeat_primitive(verts, faces, centers=centers, colors=colors,
+                              scale=scale)
+
+    big_verts, big_faces, big_colors, big_centers = res
+
+    actor = get_actor_from_primitive(big_verts, big_faces, big_colors)
+    actor.GetProperty().BackfaceCullingOff()
+    vtk_centers = numpy_support.numpy_to_vtk(big_centers, deep=True)
+    vtk_centers.SetNumberOfComponents(3)
+    vtk_centers.SetName("center")
+    actor.GetMapper().GetInput().GetPointData().AddArray(vtk_centers)
+
+    def get_code(glsl_code):
+        code = ""
+        if not glsl_code:
+            return code
+
+        if not all(isinstance(i, (str)) for i in glsl_code):
+            raise IOError("The only supported format are string or filename,"
+                          "list of string or filename")
+
+        if isinstance(glsl_code, str):
+            code += "\n"
+            code += fs.load(glsl_code) if op.isfile(glsl_code) else glsl_code
+            return code
+
+        for content in glsl_code:
+            code += "\n"
+            code += fs.load(content) if op.isfile(content) else content
+        return code
+
+    vs_dec_code = get_code(vs_dec) + "\n" + fs.load("billboard_dec.vert")
+    vs_impl_code = get_code(vs_impl) + "\n" + fs.load("billboard_impl.vert")
+    fs_dec_code = get_code(fs_dec) + "\n" + fs.load("billboard_dec.frag")
+    fs_impl_code = fs.load("billboard_impl.frag") + "\n" + get_code(fs_impl)
+    gs_dec_code = get_code(gs_dec)
+    gs_impl_code = get_code(gs_impl)
+
+    mapper = actor.GetMapper()
+    mapper.MapDataArrayToVertexAttribute(
+        "center", "center", vtk.vtkDataObject.FIELD_ASSOCIATION_POINTS, -1)
+
+    mapper.AddShaderReplacement(
+        vtk.vtkShader.Vertex, "//VTK::ValuePass::Dec", True,
+        vs_dec_code, False)
+
+    mapper.AddShaderReplacement(
+        vtk.vtkShader.Vertex, "//VTK::ValuePass::Impl", True,
+        vs_impl_code, False)
+
+    mapper.AddShaderReplacement(
+        vtk.vtkShader.Fragment, "//VTK::ValuePass::Dec", True,
+        fs_dec_code, False)
+
+    mapper.AddShaderReplacement(
+        vtk.vtkShader.Fragment, "//VTK::Light::Impl", True,
+        fs_impl_code, False)
+
+    mapper.AddShaderReplacement(
+        vtk.vtkShader.Geometry, "//VTK::Output::Dec", True,
+        gs_dec_code, False)
+
+    mapper.AddShaderReplacement(
+        vtk.vtkShader.Geometry, "//VTK::Output::Impl", True,
+        gs_impl_code, False)
+
     return actor
 
 

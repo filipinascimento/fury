@@ -1,24 +1,66 @@
 import numpy as np
 import numpy.testing as npt
 import fury.primitive as fp
+import math
 
 
 def test_vertices_primitives():
-    l_primitives = [(fp.prim_square, (4, 3)),
-                    (fp.prim_box, (8, 3))]
+    # Tests the default vertices of all the built in primitive shapes.
+    l_primitives = [(fp.prim_square, (4, 3), -.5, .5, 0),
+                    (fp.prim_box, (8, 3), -.5, .5, 0),
+                    (fp.prim_tetrahedron, (4, 3), -.5, .5, 0),
+                    (fp.prim_star, (10, 3), -3, 3, -0.0666666666),
+                    (fp.prim_rhombicuboctahedron, (24, 3), -4, 4, 0)]
 
-    for func, shape in l_primitives:
+    for func, shape, e_min, e_max, e_mean in l_primitives:
         vertices, _ = func()
-
         npt.assert_equal(vertices.shape, shape)
-        npt.assert_equal(np.mean(vertices), 0)
-        npt.assert_equal(vertices.min(), -.5)
-        npt.assert_equal(vertices.max(), 0.5)
+        npt.assert_almost_equal(np.mean(vertices), e_mean)
+        npt.assert_equal(vertices.min(), e_min)
+        npt.assert_equal(vertices.max(), e_max)
+
+    vertices, _ = fp.prim_star(3)
+    npt.assert_equal(vertices.shape, (12, 3))
+    npt.assert_almost_equal(abs(np.mean(vertices)), .11111111)
+    npt.assert_equal(vertices.min(), -3)
+    npt.assert_equal(vertices.max(), 3)
+
+
+def test_vertices_primitives_icosahedron():
+    vertices, _ = fp.prim_icosahedron()
+    shape = (12, 3)
+    phi = (1 + math.sqrt(5)) / 2.0
+    npt.assert_equal(vertices.shape, shape)
+    npt.assert_equal(np.mean(vertices), 0)
+    npt.assert_equal(vertices.min(), -phi)
+    npt.assert_equal(vertices.max(), phi)
+
+
+def test_vertices_primitives_octagonalprism():
+    # Testing the default vertices of the primitive octagonal prism.
+    vertices, _ = fp.prim_octagonalprism()
+    shape = (16, 3)
+    npt.assert_equal(vertices.shape, shape)
+    npt.assert_equal(np.mean(vertices), 0)
+    npt.assert_equal(vertices.min(), -(1+float('{:.7f}'.format(math.sqrt(2)))))
+    npt.assert_equal(vertices.max(), (1+float('{:.7f}'.format(math.sqrt(2)))))
+
+
+def test_vertices_primitives_frustum():
+    # Testing the default vertices of the primitive frustum sqaure pyramid.
+    vertices, _ = fp.prim_frustum()
+    shape = (8, 3)
+    npt.assert_equal(vertices.shape, shape)
+    npt.assert_equal(np.mean(vertices), 0)
+    npt.assert_equal(vertices.min(), -1)
+    npt.assert_equal(vertices.max(), 1)
 
 
 def test_triangles_primitives():
     l_primitives = [(fp.prim_square, (2, 3)),
-                    (fp.prim_box, (12, 3))]
+                    (fp.prim_box, (12, 3)),
+                    (fp.prim_tetrahedron, (4, 3)),
+                    (fp.prim_icosahedron, (20, 3))]
 
     for func, shape in l_primitives:
         vertices, triangles = func()
@@ -68,15 +110,18 @@ def test_repeat_primitive():
     dirs = np.array([[0, 1, 0], [1, 0, 0], [0, 0, 1]])
     colors = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1.]])
 
-    big_verts, big_faces, big_colors = fp.repeat_primitive(vertices=verts,
-                                                           faces=faces,
-                                                           centers=centers,
-                                                           directions=dirs,
-                                                           colors=colors)
+    res = fp.repeat_primitive(vertices=verts,
+                              faces=faces,
+                              centers=centers,
+                              directions=dirs,
+                              colors=colors)
 
-    npt.assert_equal(big_verts.shape[0],  verts.shape[0] * centers.shape[0])
-    npt.assert_equal(big_faces.shape[0],  faces.shape[0] * centers.shape[0])
-    npt.assert_equal(big_colors.shape[0],  verts.shape[0] * centers.shape[0])
+    big_verts, big_faces, big_colors, big_centers = res
+
+    npt.assert_equal(big_verts.shape[0], verts.shape[0] * centers.shape[0])
+    npt.assert_equal(big_faces.shape[0], faces.shape[0] * centers.shape[0])
+    npt.assert_equal(big_colors.shape[0], verts.shape[0] * centers.shape[0])
+    npt.assert_equal(big_centers.shape[0], verts.shape[0] * centers.shape[0])
 
     # TODO: Check the array content
 
@@ -94,6 +139,6 @@ def test_repeat_primitive_function():
                                        directions=dirs,
                                        colors=colors)
 
-    big_verts, big_faces, big_colors = res
+    # big_verts, big_faces, big_colors, big_centers = res
 
     # npt.assert_equal(big_verts.shape[0],  verts.shape[0] * centers.shape[0])
