@@ -20,6 +20,10 @@ import numpy as np
 import vtk
 from vtk.util import numpy_support
 from fury import actor, window,ui, colormap as cmap
+import fury.primitive as fp
+from fury.utils import (get_actor_from_polydata, numpy_to_vtk_colors,
+                        set_polydata_triangles, set_polydata_vertices,
+                        set_polydata_colors)
 
 import helios
 import xnetwork
@@ -66,9 +70,9 @@ filename = "/Users/filipi/Dropbox/Projects/CDT-Visualization/Networks/Content/WS
 # network = xnetwork.xnet2igraph("/Volumes/GoogleDrive/My Drive/Remote/Archived/DesktopOLD/Se eu tivesse mesa limpa/Networks/WS_2864_6.xnet")
 
 network = xnetwork.xnet2igraph(filename)
-# network = xnetwork.xnet2igraph("/Volumes/GoogleDrive/My Drive/Dropbox/Motifs/Orbits/networks/WAX5000-2D-main.xnet")
 
 edges = np.ascontiguousarray(network.get_edgelist(),dtype=np.uint64)
+print(len(edges))
 vertices_count = network.vcount()
 
 print("Processing...")
@@ -115,15 +119,242 @@ edges_colors = np.average(np.array(edges_colors), axis=1)
 # build 2 actors that we represent our data : sphere_actor for the nodes and
 # lines_actor for the edges.
 
-sphere_actor = actor.sphere(centers=np.zeros(positions.shape),
-                            colors=colors,
-                            radii=radii * 0.5,
-                            theta=8,
-                            phi=8)
+
+# n_points = vertices_count
+n_points = colors.shape[0]
+np.random.seed(42)
+centers = np.zeros(positions.shape) # np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+# radius = radii * 0.5, #  [1, 1, 2]
+
+radius = np.ones(n_points)
+
+polydata = vtk.vtkPolyData()
+
+verts, faces = fp.prim_square()
+
+big_verts = 5*np.tile(verts, (centers.shape[0], 1))
+big_cents = np.repeat(centers, verts.shape[0], axis=0)
+
+big_verts += big_cents
+
+# print(big_verts)
+
+big_scales = np.repeat(radius, verts.shape[0], axis=0)
 
 
-sphere_geometry = numpy_support.vtk_to_numpy(sphere_actor.GetMapper().GetInput().GetPoints().GetData())
-geometry_length = sphere_geometry.shape[0] / positions.shape[0]
+# print(big_scales)
+
+big_verts *= big_scales[:, np.newaxis]
+
+# print(big_verts)
+
+tris = np.array([[0, 1, 2], [2, 3, 0]], dtype='i8')
+
+big_tris = np.tile(tris, (centers.shape[0], 1))
+shifts = np.repeat(np.arange(0, centers.shape[0] * verts.shape[0],
+                                verts.shape[0]), tris.shape[0])
+
+big_tris += shifts[:, np.newaxis]
+
+# print(big_tris)
+
+big_cols = np.repeat(colors*255, verts.shape[0], axis=0)
+
+# print(big_cols)
+
+big_centers = np.repeat(centers, verts.shape[0], axis=0)
+
+# print(big_centers)
+
+big_centers *= big_scales[:, np.newaxis]
+
+# print(big_centers)
+
+# set_polydata_vertices(polydata, big_verts)
+set_polydata_triangles(polydata, big_tris)
+# set_polydata_colors(polydata, big_cols)
+
+vtk_verts = numpy_support.numpy_to_vtk(big_verts, deep=False)
+vtk_points = vtk.vtkPoints()
+vtk_points.SetData(vtk_verts)
+polydata.SetPoints(vtk_points)
+
+vtk_colors = numpy_support.numpy_to_vtk(big_cols, deep=True,array_type=vtk.VTK_UNSIGNED_CHAR)
+vtk_colors.SetNumberOfComponents(4)
+vtk_colors.SetName("RGBA")
+polydata.GetPointData().SetScalars(vtk_colors)
+
+vtk_centers = numpy_support.numpy_to_vtk(big_centers, deep=False)
+vtk_centers.SetNumberOfComponents(3)
+vtk_centers.SetName("center")
+polydata.GetPointData().AddArray(vtk_centers)
+
+sphere_actor = get_actor_from_polydata(polydata)
+sphere_actor.GetProperty().BackfaceCullingOff()
+
+# scene.add(canvas_actor)
+
+mapper = sphere_actor.GetMapper()
+
+mapper.MapDataArrayToVertexAttribute(
+    "center", "center", vtk.vtkDataObject.FIELD_ASSOCIATION_POINTS, -1)
+
+mapper.AddShaderReplacement(
+    vtk.vtkShader.Vertex,
+    "//VTK::ValuePass::Dec",
+    True,
+    """
+    //VTK::ValuePass::Dec
+    in vec3 center;
+
+    uniform mat4 Ext_mat;
+
+    out vec3 centeredVertexMC;
+    out vec3 cameraPosition;
+    out vec3 viewUp;
+
+    """,
+    False
+)
+
+mapper.AddShaderReplacement(
+    vtk.vtkShader.Vertex,
+    "//VTK::ValuePass::Impl",
+    True,
+    """
+    //VTK::ValuePass::Impl
+    centeredVertexMC = vertexMC.xyz - center;
+    float scalingFactor = 1. / abs(centeredVertexMC.x);
+    centeredVertexMC *= scalingFactor;
+
+    vec3 CameraRight_worldspace = vec3(MCVCMatrix[0][0], MCVCMatrix[1][0], MCVCMatrix[2][0]);
+    vec3 CameraUp_worldspace = vec3(MCVCMatrix[0][1], MCVCMatrix[1][1], MCVCMatrix[2][1]);
+
+    vec3 vertexPosition_worldspace = center + CameraRight_worldspace * 1 * centeredVertexMC.x + CameraUp_worldspace * 1 * centeredVertexMC.y;
+    gl_Position = MCDCMatrix * vec4(vertexPosition_worldspace, 1.);
+
+    """,
+    False
+)
+
+mapper.AddShaderReplacement(
+    vtk.vtkShader.Fragment,
+    "//VTK::ValuePass::Dec",
+    True,
+    """
+    //VTK::ValuePass::Dec
+    in vec3 centeredVertexMC;
+    in vec3 cameraPosition;
+    in vec3 viewUp;
+
+    uniform vec3 Ext_camPos;
+    uniform vec3 Ext_viewUp;
+    """,
+    False
+)
+
+mapper.AddShaderReplacement(
+    vtk.vtkShader.Fragment,
+    "//VTK::Light::Impl",
+    True,
+    """
+    // Renaming variables passed from the Vertex Shader
+    vec3 color = vertexColorVSOutput.rgb;
+    vec3 point = centeredVertexMC;
+    fragOutput0 = vec4(color, 0.7);
+    /*
+    // Comparing camera position from vertex shader and python
+    float dist = distance(cameraPosition, Ext_camPos);
+    if(dist < .0001)
+        fragOutput0 = vec4(1, 0, 0, 1);
+    else
+        fragOutput0 = vec4(0, 1, 0, 1);
+
+
+    // Comparing view up from vertex shader and python
+    float dist = distance(viewUp, Ext_viewUp);
+    if(dist < .0001)
+        fragOutput0 = vec4(1, 0, 0, 1);
+    else
+        fragOutput0 = vec4(0, 1, 0, 1);
+    */
+    float len = length(point);
+    // VTK Fake Spheres
+    float radius = 1.;
+    if(len > radius)
+        discard;
+    vec3 normalizedPoint = normalize(vec3(point.xy, sqrt(1. - len)));
+    vec3 direction = normalize(vec3(1., 1., 1.));
+    float df = max(0, dot(direction, normalizedPoint));
+    float sf = pow(df, 24);
+    fragOutput0 = vec4(max(df * color, sf * vec3(1)), 1);
+    """,
+    False
+)
+
+@vtk.calldata_type(vtk.VTK_OBJECT)
+def vtk_shader_callback(caller, event, calldata=None):
+    res = scene.size()
+    camera = scene.GetActiveCamera()
+    cam_pos = camera.GetPosition()
+    foc_pnt = camera.GetFocalPoint()
+    view_up = camera.GetViewUp()
+    # cam_light_mat = camera.GetCameraLightTransformMatrix()
+    # comp_proj_mat = camera.GetCompositeProjectionTransformMatrix()
+    # exp_proj_mat = camera.GetExplicitProjectionTransformMatrix()
+    # eye_mat = camera.GetEyeTransformMatrix()
+    # model_mat = camera.GetModelTransformMatrix()
+    # model_view_mat = camera.GetModelViewTransformMatrix()
+    # proj_mat = camera.GetProjectionTransformMatrix(scene)
+    view_mat = camera.GetViewTransformMatrix()
+    mat = view_mat
+    np.set_printoptions(precision=3, suppress=True)
+    np_mat = np.zeros((4, 4))
+    for i in range(4):
+        for j in range(4):
+            np_mat[i, j] = mat.GetElement(i, j)
+    program = calldata
+    if program is not None:
+        # print("\nCamera position: {}".format(cam_pos))
+        # print("Focal point: {}".format(foc_pnt))
+        # print("View up: {}".format(view_up))
+        # print(mat)
+        # print(np_mat)
+        # print(np.dot(-np_mat[:3, 3], np_mat[:3, :3]))
+        # a = np.array(cam_pos) - np.array(foc_pnt)
+        # print(a / np.linalg.norm(a))
+        # print(cam_light_mat)
+        # #print(comp_proj_mat)
+        # print(exp_proj_mat)
+        # print(eye_mat)
+        # print(model_mat)
+        # print(model_view_mat)
+        # print(proj_mat)
+        # print(view_mat)
+        program.SetUniform2f("Ext_res", res)
+        program.SetUniform3f("Ext_camPos", cam_pos)
+        program.SetUniform3f("Ext_focPnt", foc_pnt)
+        program.SetUniform3f("Ext_viewUp", view_up)
+        program.SetUniformMatrix("Ext_mat", mat)
+
+mapper.AddObserver(vtk.vtkCommand.UpdateShaderEvent, vtk_shader_callback)
+
+
+# sphere_actor = actor.sphere(centers=np.zeros(positions.shape),
+#                             colors=colors,
+#                             radii=radii * 0.5,
+#                             theta=8,
+#                             phi=8)
+
+
+# sphere_geometry = numpy_support.vtk_to_numpy(sphere_actor.GetMapper().GetInput().GetPoints().GetData())
+centers_geometry = numpy_support.vtk_to_numpy(vtk_centers)
+centers_geometryOrig = np.array(numpy_support.vtk_to_numpy(vtk_centers))
+centers_length = centers_geometry.shape[0] / positions.shape[0]
+
+verts_geometry = numpy_support.vtk_to_numpy(vtk_verts)
+verts_geometryOrig = np.array(numpy_support.vtk_to_numpy(vtk_verts))
+verts_length = verts_geometry.shape[0] / positions.shape[0]
 
 # global picker
 
@@ -133,7 +364,6 @@ geometry_length = sphere_geometry.shape[0] / positions.shape[0]
 
 
 # def left_click_callback(obj, event):
-
 #     global text_block, showm, picker,scenePicker
 #     x, y, z = obj.GetCenter()
 #     event_pos = showm.iren.GetEventPosition()
@@ -156,7 +386,9 @@ geometry_length = sphere_geometry.shape[0] / positions.shape[0]
 
 lines_actor = actor.line(np.zeros((len(edges), 2, 3)),
                         colors=edges_colors, lod=False,
-                        fake_tube=True, linewidth=3,opacity=0.2)
+                        fake_tube=False, linewidth=3,
+                        opacity=0.2
+                        )
 
 ###############################################################################
 # Defining timer callback and layout iterator
@@ -183,9 +415,9 @@ def new_layout_timer(showm, edges_list, vertices_count,
         positions[:] = view_size * \
             np.random.random((vertices_count, 3)) - view_size / 2.0
 
-    sphere_geometry = np.array(numpy_support.vtk_to_numpy(
-        sphere_actor.GetMapper().GetInput().GetPoints().GetData()))
-    geometry_length = sphere_geometry.shape[0] / vertices_count
+    # sphere_geometry = np.array(numpy_support.vtk_to_numpy(
+    #     sphere_actor.GetMapper().GetInput().GetPoints().GetData()))
+    # geometry_length = sphere_geometry.shape[0] / vertices_count
 
     threadID = helios.startAsyncLayout(edgesArray,positions,velocities);
     def iterateHelios(iterationCount):
@@ -197,16 +429,27 @@ def new_layout_timer(showm, edges_list, vertices_count,
 
     
 
+    framesPerSecond = []
     def _timer(_obj, _event):
-        nonlocal counter
+        nonlocal counter,framesPerSecond
         counter += 1
-        # if(counter%100==0):
-        #     print(scene.frame_rate())
-        spheres_positions = numpy_support.vtk_to_numpy(
-            sphere_actor.GetMapper().GetInput().GetPoints().GetData())
-        spheres_positions[:] = sphere_geometry + \
-            np.repeat(positions, geometry_length, axis=0)
+        framesPerSecond.append(scene.frame_rate)
+        if(counter%100==0):
+            print(np.average(framesPerSecond))
+            framesPerSecond=[]
+        # spheres_positions = numpy_support.vtk_to_numpy(
+        #     sphere_actor.GetMapper().GetInput().GetPoints().GetData())
+        # spheres_positions[:] = sphere_geometry + \
+        #     np.repeat(positions, geometry_length, axis=0)
+        # print(sphere_geometry)
+        # sphere_geometry[:] = np.repeat(positions, geometry_length, axis=0)
+        
+        centers_geometry[:] = centers_geometryOrig + \
+            np.repeat(positions, centers_length, axis=0)
 
+        verts_geometry[:] = verts_geometryOrig + \
+            np.repeat(positions, verts_length, axis=0)
+            
         edges_positions = numpy_support.vtk_to_numpy(
             lines_actor.GetMapper().GetInput().GetPoints().GetData())
         edges_positions[::2] = positions[edges_list[:, 0]]
@@ -214,7 +457,8 @@ def new_layout_timer(showm, edges_list, vertices_count,
 
         lines_actor.GetMapper().GetInput().GetPoints().GetData().Modified()
         lines_actor.GetMapper().GetInput().ComputeBounds()
-
+        vtk_verts.Modified()
+        vtk_centers.Modified()
         sphere_actor.GetMapper().GetInput().GetPoints().GetData().Modified()
         sphere_actor.GetMapper().GetInput().ComputeBounds()
         showm.scene.ResetCameraClippingRange()
@@ -250,7 +494,7 @@ scene.add(sphere_actor)
 # more time.
 
 showm = window.ShowManager(scene, reset_camera=False, size=(
-    1980, 1920), order_transparent=False, multi_samples=8,)
+    1980, 1920), order_transparent=False, multi_samples=2,)
 
 
 showm.initialize()

@@ -360,12 +360,12 @@ def test_spheres_on_canvas():
     #     [.95, .55, .05], [.62, .42, .75], [.26, .58, .85], [.24, .82, .95],
     #     [.95, .78, .25], [.85, .58, .35], [1., 1., 1.]
     # ])
-    n_points = 2000000
-    colors =  np.array([[255, 0, 0], [0, 255, 0], [0, 0, 255]]) #255 * np.random.rand(n_points, 3)
+    n_points = 200
+    colors =  255 * np.random.rand(n_points, 3)
     # n_points = colors.shape[0]
     np.random.seed(42)
-    centers = np.array([[2, 0, 0], [0, 2, 0], [0, 0, 0]]) # 500 * np.random.rand(n_points, 3) - 250 # np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
-    radius = [2, 2, 2] # np.random.rand(n_points) #  [1, 1, 2]
+    centers = 500 * np.random.rand(n_points, 3) - 250 # np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+    radius = np.random.rand(n_points) #  [1, 1, 2]
 
     polydata = vtk.vtkPolyData()
 
@@ -589,7 +589,7 @@ def test_spheres_on_canvas():
     # scene.add(label)
     scene.add(actor.axes())
 
-    scene.background((1, 1, 1))
+    scene.background((0, 0, 0))
 
     # scene.set_camera(position=(1.5, 2.5, 15), focal_point=(1.5, 2.5, 1.5),
     #                  view_up=(0, 1, 0))
@@ -775,6 +775,6 @@ def test_fireballs_on_canvas():
     showm.start()
 
 
-# test_spheres_on_canvas()
+test_spheres_on_canvas()
 # test_fireballs_on_canvas()
-test_sh()
+# test_sh()
