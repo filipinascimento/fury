@@ -1,12 +1,16 @@
 """Module dedicated for basic primitive."""
 from os.path import join as pjoin
+from distutils.version import LooseVersion
 import numpy as np
 from fury.data import DATA_DIR
-from fury.transform import cart2sphere, euler_matrix
+from fury.transform import cart2sphere
 from fury.utils import fix_winding_order
-from scipy.spatial import ConvexHull
-from scipy.spatial import transform
+from scipy.spatial import ConvexHull, transform
+from scipy.version import short_version
 import math
+
+SCIPY_1_4_PLUS = LooseVersion(short_version) >= LooseVersion('1.4.0')
+
 
 SPHERE_FILES = {
     'symmetric362': pjoin(DATA_DIR, 'evenly_distributed_sphere_362.npz'),
@@ -42,8 +46,8 @@ def faces_from_sphere_vertices(vertices):
 
 
 def repeat_primitive_function(func, centers, func_args=[],
-                              directions=(1, 0, 0), colors=(255, 0, 0),
-                              scale=1):
+                              directions=(1, 0, 0), colors=(1, 0, 0),
+                              scales=1):
     """Repeat Vertices and triangles of a specific primitive function.
 
     It could be seen as a glyph. The primitive function should generate and
@@ -61,7 +65,7 @@ def repeat_primitive_function(func, centers, func_args=[],
         The orientation vector of the cone.
     colors : ndarray (N,3) or (N, 4) or tuple (3,) or tuple (4,)
         RGB or RGBA (for opacity) R, G, B and A should be at the range [0, 1]
-    scale : ndarray, shape (N) or (N,3) or float or int, optional
+    scales : ndarray, shape (N) or (N,3) or float or int, optional
         The height of the cone.
 
     Returns
@@ -84,12 +88,12 @@ def repeat_primitive_function(func, centers, func_args=[],
 
     vertices = np.concatenate([func(i)[0] for i in func_args])
     return repeat_primitive(vertices=vertices, faces=faces, centers=centers,
-                            directions=directions, colors=colors, scale=scale,
-                            have_tiled_verts=True)
+                            directions=directions, colors=colors,
+                            scales=scales, have_tiled_verts=True)
 
 
-def repeat_primitive(vertices, faces, centers, directions=(1, 0, 0),
-                     colors=(255, 0, 0), scale=1, have_tiled_verts=False):
+def repeat_primitive(vertices, faces, centers, directions=None,
+                     colors=(1, 0, 0), scales=1, have_tiled_verts=False):
     """Repeat Vertices and triangles of a specific primitive shape.
 
     It could be seen as a glyph.
@@ -106,7 +110,7 @@ def repeat_primitive(vertices, faces, centers, directions=(1, 0, 0),
         The orientation vector of the cone.
     colors : ndarray (N,3) or (N, 4) or tuple (3,) or tuple (4,)
         RGB or RGBA (for opacity) R, G, B and A should be at the range [0, 1]
-    scale : ndarray, shape (N) or (N,3) or float or int, optional
+    scales : ndarray, shape (N) or (N,3) or float or int, optional
         The height of the cone.
     have_tiled_verts : bool
         option to control if we need to duplicate vertices of a shape or not
@@ -132,10 +136,15 @@ def repeat_primitive(vertices, faces, centers, directions=(1, 0, 0),
     unit_triangles_size = faces.shape[0]
 
     # scale them
-    if isinstance(scale, (list, tuple, np.ndarray)):
-        scale = np.repeat(scale, unit_verts_size, axis=0)
-        scale = scale.reshape((big_vertices.shape[0], 1))
-    big_vertices *= scale
+    if not isinstance(scales, np.ndarray):
+        scales = np.array(scales)
+    if scales.ndim == 1:
+        if scales.size == centers.shape[0]:
+            scales = np.repeat(scales, unit_verts_size, axis=0)
+            scales = scales.reshape((big_vertices.shape[0], 1))
+    elif scales.ndim == 2:
+        scales = np.repeat(scales, unit_verts_size, axis=0)
+    big_vertices *= scales
 
     # update triangles
     big_triangles = np.array(np.tile(faces,
@@ -149,11 +158,14 @@ def repeat_primitive(vertices, faces, centers, directions=(1, 0, 0),
                                                 1))
 
     def normalize_input(arr, arr_name=''):
-        if isinstance(arr, (tuple, list, np.ndarray)) and len(arr) == 3 and \
-                not all(isinstance(i, (list, tuple, np.ndarray)) for i in arr):
+        if isinstance(arr, (tuple, list, np.ndarray)) and len(arr) in [3, 4] \
+                and not all(isinstance(i, (list, tuple, np.ndarray))
+                            for i in arr):
             return np.array([arr] * centers.shape[0])
         elif isinstance(arr, np.ndarray) and len(arr) == 1:
             return np.repeat(arr, centers.shape[0], axis=0)
+        elif arr is None:
+            return np.array([])
         elif len(arr) != len(centers):
             msg = "{} size should be 1 or ".format(arr_name)
             msg += "equal to the numbers of centers"
@@ -164,13 +176,18 @@ def repeat_primitive(vertices, faces, centers, directions=(1, 0, 0),
     # update colors
     colors = normalize_input(colors, 'colors')
     big_colors = np.repeat(colors, unit_verts_size, axis=0)
+    big_colors *= 255
 
     # update orientations
     directions = normalize_input(directions, 'directions')
     for pts, dirs in enumerate(directions):
-        ai, aj, ak = transform.Rotation.from_rotvec(np.pi / 2 * dirs). \
-            as_euler('zyx')
-        rotation_matrix = euler_matrix(ai, aj, ak)
+        w = np.cos(0.5 * np.pi)
+        denom = np.linalg.norm(dirs/2.)
+        f = (np.sin(0.5 * np.pi) / denom) if denom else 0
+        dirs = np.append((dirs / 2.) * f, w)
+        rot = transform.Rotation.from_quat(dirs)
+        rotation_matrix = rot.as_matrix() if SCIPY_1_4_PLUS else rot.as_dcm()
+
         big_vertices[pts * unit_verts_size: (pts + 1) * unit_verts_size] = \
             np.dot(rotation_matrix[:3, :3],
                    big_vertices[pts * unit_verts_size:
@@ -586,6 +603,7 @@ def prim_octagonalprism():
         vertices coords that compose our prism
     triangles: ndarray
         triangles that compose our prism
+
     """
     # Local variable to represent the square root of two rounded
     # to 7 decimal places
@@ -635,20 +653,22 @@ def prim_octagonalprism():
                           [9, 10, 11],
                           [10, 13, 14],
                           [13, 10, 9]], dtype='u8')
+    vertices /= 4
     triangles = fix_winding_order(vertices, triangles, clockwise=True)
     return vertices, triangles
 
 
 def prim_frustum():
     """Return vertices and triangle for a square frustum prism.
+
     Returns
     -------
     vertices: ndarray
         vertices coords that compose our prism
     triangles: ndarray
         triangles that compose our prism
-    """
 
+    """
     vertices = np.array([[-.5, -.5, .5],
                         [.5, -.5, .5],
                         [.5, .5, .5],
@@ -669,5 +689,6 @@ def prim_frustum():
                          [1, 6, 5],
                          [5, 0, 1],
                          [0, 5, 4]], dtype='u8')
+    vertices /= 2
     triangles = fix_winding_order(vertices, triangles, clockwise=True)
     return vertices, triangles

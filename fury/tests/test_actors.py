@@ -10,9 +10,8 @@ from scipy.ndimage.measurements import center_of_mass
 from fury import shaders
 from fury import actor, window
 from fury.actor import grid
-from fury.decorators import skip_osx
-from fury.primitive import prim_sphere, prim_square, repeat_primitive
-from fury.utils import shallow_copy, rotate, get_actor_from_primitive
+from fury.decorators import skip_osx, skip_win
+from fury.utils import shallow_copy, rotate
 from fury.testing import assert_greater, assert_greater_equal
 
 # Allow import, but disable doctests if we don't have dipy
@@ -200,7 +199,7 @@ def test_surface():
                 npt.assert_equal(report.objects, 1)
 
 
-def test_contour_from_roi():
+def test_contour_from_roi(interactive=False):
 
     # Render volume
     scene = window.Scene()
@@ -215,7 +214,8 @@ def test_contour_from_roi():
 
     scene.reset_camera()
     scene.reset_clipping_range()
-    # window.show(scene)
+    if interactive:
+        window.show(scene)
 
     # Test Errors
     npt.assert_raises(ValueError, actor.contour_from_roi, np.ones(50))
@@ -233,7 +233,8 @@ def test_contour_from_roi():
 
     scene2.reset_camera()
     scene2.reset_clipping_range()
-    # window.show(scene2)
+    if interactive:
+        window.show(scene2)
 
     arr = window.snapshot(scene, 'test_surface.png', offscreen=True)
     arr2 = window.snapshot(scene2, 'test_surface2.png', offscreen=True)
@@ -421,7 +422,9 @@ def test_streamtube_and_line_actors():
 
     c3 = actor.line(lines, colors, depth_cue=True, fake_tube=True)
 
-    mapper_code = c3.GetMapper().GetGeometryShaderCode()
+    VTK_9_PLUS = window.vtk.vtkVersion.GetVTKMajorVersion() >= 9
+    shader_obj = c3.GetShaderProperty() if VTK_9_PLUS else c3.GetMapper()
+    mapper_code = shader_obj.GetGeometryShaderCode()
     file_code = shaders.load("line.geom")
     npt.assert_equal(mapper_code, file_code)
 
@@ -930,56 +933,43 @@ def test_cones_vertices_faces(interactive=False):
     scene.clear()
 
 
-def test_octprism_vertices_faces(interactive=False):
+def test_basic_geometry_actor(interactive=False):
+    centers = np.array([[4, 0, 0], [0, 4, 0], [0, 0, 0]])
+    colors = np.array([[1, 0, 0, 0.4], [0, 1, 0, 0.8], [0, 0, 1, 0.5]])
+    directions = np.array([[1, 1, 0]])
+    scale_list = [1, 2, (1, 1, 1), [3, 2, 1], np.array([1, 2, 3]),
+                  np.array([[1, 2, 3], [1, 3, 2], [3, 1, 2]])]
 
-    scene = window.Scene()
-    centers = np.array([[0, 0, 0], [1, 3, 0], [2, 0, 4]])
-    directions = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
-    colors = np.array([[255, 0, 0], [0, 100, 100], [50, 0, 100]])
-    octprism_actor = actor.octagonalprism(centers=centers,
-                                          directions=directions,
-                                          colors=colors)
-    scene.add(octprism_actor)
+    actor_list = [[actor.cube, {}],
+                  [actor.box, {}],
+                  [actor.square, {}],
+                  [actor.rectangle, {}],
+                  [actor.frustum, {}],
+                  [actor.octagonalprism, {}]]
 
-    if interactive:
-        window.show(scene, order_transparent=True)
-    arr = window.snapshot(scene)
-    report = window.analyze_snapshot(arr, colors=colors)
-    npt.assert_equal(report.colors_found, [True, True, True])
-    scene.clear()
+    for act_func, extra_args in actor_list:
+        for scale in scale_list:
+            scene = window.Scene()
+            g_actor = act_func(centers=centers, colors=colors,
+                               directions=directions, scales=scale,
+                               **extra_args)
 
+            scene.add(g_actor)
+            if interactive:
+                window.show(scene)
 
-def test_frustum_vertices_faces(interactive=False):
-
-    scene = window.Scene()
-    centers = np.array([[1, 0, 0], [0, 1, 2], [3, 0, 1]])
-    directions = np.array([[0, 1, 0], [1, 0, 0], [1, 0, 0]])
-    colors = np.array([[0, 200, 0], [255, 0, 0], [0, 200, 100]])
-    frustum_actor = actor.frustum(centers=centers,
-                                  directions=directions,
-                                  colors=colors)
-    frustum_actor.GetProperty().SetAmbient(1)
-    frustum_actor.GetProperty().SetDiffuse(0.0)
-    frustum_actor.GetProperty().SetSpecular(0.0)
-    scene.add(frustum_actor)
-
-    if interactive:
-        window.show(scene, order_transparent=True)
-    arr = window.snapshot(scene)
-    report = window.analyze_snapshot(arr, colors=colors)
-    npt.assert_equal(report.colors_found, [True, True, True])
-    scene.clear()
+            arr = window.snapshot(scene)
+            report = window.analyze_snapshot(arr, colors=colors)
+            msg = 'Failed with {}, scale={}'.format(act_func.__name__, scale)
+            npt.assert_equal(report.objects, 3, err_msg=msg)
 
 
-def test_geometry_actor(interactive=False):
-
+def test_advanced_geometry_actor(interactive=False):
     xyz = np.array([[0, 0, 0], [50, 0, 0], [100, 0, 0]])
     dirs = np.array([[0, 1, 0], [1, 0, 0], [0, 0.5, 0.5]])
 
     actor_list = [[actor.cone, {'directions': dirs, 'resolution': 8}],
                   [actor.arrow, {'directions': dirs, 'resolution': 9}],
-                  [actor.box, {'directions': dirs, 'size': (1, 3, 2)}],
-                  [actor.cube, {'directions': dirs}],
                   [actor.cylinder, {'directions': dirs}]]
 
     scene = window.Scene()
@@ -1184,22 +1174,6 @@ def test_grid(_interactive=False):
     npt.assert_equal(report.objects > 6, True)
 
 
-def _sphere(scale=1):
-
-    vertices, faces = prim_sphere('symmetric362')
-
-    from fury.utils import set_polydata_vertices, set_polydata_triangles, vtk
-    polydata = vtk.vtkPolyData()
-
-    set_polydata_vertices(polydata, scale * vertices)
-    set_polydata_triangles(polydata, faces)
-    from fury.utils import set_polydata_normals, normals_from_v_f
-
-    normals = normals_from_v_f(scale * vertices, faces)
-    set_polydata_normals(polydata, normals)
-    return polydata, scale * vertices, normals
-
-
 def test_direct_sphere_mapping():
 
     arr = 255 * np.ones((810, 1620, 3), dtype='uint8')
@@ -1297,71 +1271,77 @@ def test_matplotlib_figure():
 def test_superquadric_actor(interactive=False):
     scene = window.Scene()
     centers = np.array([[8, 0, 0], [0, 8, 0], [0, 0, 0]])
-    colors = np.array([[255, 0, 0], [0, 255, 0], [0, 0, 255]])
+    colors = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
     directions = np.random.rand(3, 3)
-    scale = [1, 2, 3]
+    scales = [1, 2, 3]
     roundness = np.array([[1, 1], [1, 2], [2, 1]])
 
     sq_actor = actor.superquadric(centers, roundness=roundness,
                                   directions=directions,
                                   colors=colors.astype(np.uint8),
-                                  scale=scale)
+                                  scales=scales)
     scene.add(sq_actor)
     if interactive:
         window.show(scene)
 
     arr = window.snapshot(scene, offscreen=True)
     arr[arr > 0] = 255  # Normalization
-    res = window.analyze_snapshot(arr, colors=colors.astype(np.uint8),
-                                  find_objects=False)
-    npt.assert_equal(res.colors_found, [True, True, True])
-
-
-def test_square_actor(interactive=False):
-    scene = window.Scene()
-    centers = np.array([[2, 0, 0], [0, 2, 0], [0, 0, 0]])
-    colors = np.array([[255, 0, 0], [0, 255, 0], [0, 0, 255]])
-    scale = [1, 2, 3]
-
-    verts, faces = prim_square()
-    res = repeat_primitive(verts, faces, centers=centers, colors=colors,
-                           scale=scale)
-
-    big_verts, big_faces, big_colors, _ = res
-    sq_actor = get_actor_from_primitive(big_verts, big_faces, big_colors)
-    sq_actor.GetProperty().BackfaceCullingOff()
-    scene.add(sq_actor)
-    scene.add(actor.axes())
-    if interactive:
-        window.show(scene)
+    report = window.analyze_snapshot(arr, colors=255*colors.astype(np.uint8))
+    npt.assert_equal(report.objects, 3)
+    npt.assert_equal(report.colors_found, [True, True, True])
 
 
 def test_billboard_actor(interactive=False):
     scene = window.Scene()
     scene.background((1, 1, 1))
     centers = np.array([[2, 0, 0], [0, 2, 0], [0, 0, 0]])
-    colors = np.array([[255, 0, 0], [0, 255, 0], [0, 0, 255]])
-    scale = [1, 2, 1]
+    colors = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+    scales = [1, 2, 1]
 
     fake_sphere = \
-    """
-    float len = length(point);
-    float radius = 1.;
-    if(len > radius)
-        {discard;}
+        """
+        float len = length(point);
+        float radius = 1.;
+        if(len > radius)
+            {discard;}
 
-    vec3 normalizedPoint = normalize(vec3(point.xy, sqrt(1. - len)));
-    vec3 direction = normalize(vec3(1., 1., 1.));
-    float df = max(0, dot(direction, normalizedPoint));
-    float sf = pow(df, 24);
-    fragOutput0 = vec4(max(df * color, sf * vec3(1)), 1);
-    """
+        vec3 normalizedPoint = normalize(vec3(point.xy, sqrt(1. - len)));
+        vec3 direction = normalize(vec3(1., 1., 1.));
+        float df_1 = max(0, dot(direction, normalizedPoint));
+        float sf_1 = pow(df_1, 24);
+        fragOutput0 = vec4(max(df_1 * color, sf_1 * vec3(1)), 1);
+        """
 
     billboard_actor = actor.billboard(centers,
                                       colors=colors.astype(np.uint8),
-                                      scale=scale,
+                                      scales=scales,
                                       fs_impl=fake_sphere)
     scene.add(billboard_actor)
     scene.add(actor.axes())
     if interactive:
         window.show(scene)
+
+
+@pytest.mark.skipif(skip_win, reason="This test does not work on Windows"
+                                     " due to snapshot (memory access"
+                                     " violation). Check what is causing this"
+                                     " issue with shader")
+def test_sdf_actor(interactive=False):
+    scene = window.Scene()
+    scene.background((1, 1, 1))
+    centers = np.array([[2, 0, 0], [0, 2, 0], [0, 0, 0]])
+    colors = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+    directions = np.array([[0, 1, 0], [1, 0, 0], [0, 0, 1]])
+    scales = [1, 2, 3]
+    primitive = ['sphere', 'ellipsoid', 'torus']
+
+    sdf_actor = actor.sdf(centers, directions,
+                          colors, primitive, scales)
+    scene.add(sdf_actor)
+    scene.add(actor.axes())
+    if interactive:
+        window.show(scene)
+
+    arr = window.snapshot(scene)
+    report = window.analyze_snapshot(arr, colors=colors)
+    npt.assert_equal(report.objects, 3)

@@ -9,6 +9,7 @@ import vtk
 
 import numpy.testing as npt
 import pytest
+import warnings
 
 from fury import window, actor, ui
 from fury.colormap import distinguishable_colormap
@@ -404,6 +405,56 @@ def test_text_block_2d_justification():
     # show_manager.start()
 
     window.snapshot(show_manager.scene, size=window_size, offscreen=True)
+
+
+def test_text_block_2d_size():
+    text_block_1 = ui.TextBlock2D(position=(50, 50), size=(100, 100))
+
+    npt.assert_equal(text_block_1.actor.GetTextScaleMode(), 1)
+    npt.assert_equal(text_block_1.size, (100, 100))
+
+    text_block_1.font_size = 50
+
+    npt.assert_equal(text_block_1.actor.GetTextScaleMode(), 0)
+    npt.assert_equal(text_block_1.font_size, 50)
+
+    text_block_2 = ui.TextBlock2D(position=(50, 50), font_size=50)
+
+    npt.assert_equal(text_block_2.actor.GetTextScaleMode(), 0)
+    npt.assert_equal(text_block_2.font_size, 50)
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always", RuntimeWarning)
+        text_block_2.size
+        npt.assert_equal(len(w), 1)
+        npt.assert_(issubclass(w[-1].category, RuntimeWarning))
+
+    text_block_2.resize((100, 100))
+
+    npt.assert_equal(text_block_2.actor.GetTextScaleMode(), 1)
+    npt.assert_equal(text_block_2.size, (100, 100))
+
+    text_block_2.position = (100, 100)
+    npt.assert_equal(text_block_2.position, (100, 100))
+
+    window_size = (700, 700)
+    show_manager = window.ShowManager(size=window_size)
+
+    text_block_3 = ui.TextBlock2D(text="FURY\nFURY\nFURY\nHello",
+                                  position=(150, 100), bg_color=(1, 0, 0),
+                                  color=(0, 1, 0), size=(100, 100))
+
+    show_manager.scene.add(text_block_3)
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always", RuntimeWarning)
+        text_block_3.font_size = 100
+        npt.assert_equal(len(w), 1)
+        npt.assert_(issubclass(w[-1].category, RuntimeWarning))
+        npt.assert_equal(text_block_3.size, (100, 100))
+
+        text_block_3.font_size = 12
+        npt.assert_equal(len(w), 1)
+        npt.assert_(issubclass(w[-1].category, RuntimeWarning))
+        npt.assert_equal(text_block_3.font_size, 12)
 
 
 def test_ui_line_slider_2d_horizontal_bottom(recording=False):
@@ -1146,6 +1197,139 @@ def test_ui_file_menu_2d(interactive=False):
         show_manager.start()
 
 
+def test_ui_combobox_2d(interactive=False):
+    filename = "test_ui_combobox_2d"
+    recording_filename = pjoin(DATA_DIR, filename + ".log.gz")
+    expected_events_counts_filename = pjoin(DATA_DIR, filename + ".json")
+
+    values = ["An Item" + str(i) for i in range(0, 5)]
+    new_values = ["An Item5", "An Item6"]
+
+    combobox = ui.ComboBox2D(
+        items=values, position=(400, 400), size=(300, 200))
+
+    # Assign the counter callback to every possible event.
+    event_counter = EventCounter()
+    event_counter.monitor(combobox)
+
+    current_size = (800, 800)
+    show_manager = window.ShowManager(
+        size=current_size, title="ComboBox UI Example")
+    show_manager.scene.add(combobox)
+
+    values.extend(new_values)
+    combobox.append_item(*new_values)
+    npt.assert_equal(values, combobox.items)
+
+    values.append("An Item7")
+    combobox.append_item("An Item7")
+    npt.assert_equal(values, combobox.items)
+
+    values.append("An Item8")
+    values.append("An Item9")
+    combobox.append_item("An Item8", "An Item9")
+    npt.assert_equal(values, combobox.items)
+
+    complex_list = [[0], (1, [[2, 3], 4], 5)]
+    combobox.append_item(*complex_list)
+    values.extend([str(i) for i in range(6)])
+    npt.assert_equal(values, combobox.items)
+
+    invalid_item = {"Hello": 1, "World": 2}
+    npt.assert_raises(TypeError, combobox.append_item, invalid_item)
+
+    npt.assert_equal(values, combobox.items)
+    npt.assert_equal((60, 60), combobox.drop_button_size)
+    npt.assert_equal([300, 140], combobox.drop_menu_size)
+    npt.assert_equal([300, 200], combobox.size)
+
+    ui.ComboBox2D(items=values, draggable=False)
+
+    if interactive:
+        show_manager.record_events_to_file(recording_filename)
+        print(list(event_counter.events_counts.items()))
+        event_counter.save(expected_events_counts_filename)
+
+    else:
+        show_manager.play_events_from_file(recording_filename)
+        expected = EventCounter.load(expected_events_counts_filename)
+        event_counter.check_counts(expected)
+
+    npt.assert_equal("An Item1", combobox.selected_text)
+    npt.assert_equal(1, combobox.selected_text_index)
+
+    combobox.resize((450, 300))
+    npt.assert_equal((360, 90), combobox.text_block_size)
+    npt.assert_equal((90, 90), combobox.drop_button_size)
+    npt.assert_equal((450, 210), combobox.drop_menu_size)
+
+
+def test_ui_tab_ui(interactive=False):
+    filename = "test_ui_tab_ui"
+    recording_filename = pjoin(DATA_DIR, filename + ".log.gz")
+    expected_events_counts_filename = pjoin(DATA_DIR, filename + ".json")
+
+    tab_ui = ui.TabUI(position=(50, 50), size=(300, 300), nb_tabs=3,
+                      draggable=True)
+
+    tab_ui.tabs[0].title = "Tab 1"
+    tab_ui.tabs[1].title = "Tab 2"
+    tab_ui.tabs[2].title = "Tab 3"
+
+    tab_ui.add_element(0, ui.Checkbox(["Option 1", "Option 2"]), (0.5, 0.5))
+    tab_ui.add_element(1, ui.LineSlider2D(), (0.0, 0.5))
+    tab_ui.add_element(2, ui.TextBlock2D(), (0.5, 0.5))
+
+    with npt.assert_raises(IndexError):
+        tab_ui.add_element(3, ui.TextBlock2D(), (0.5, 0.5, 0.5))
+
+    with npt.assert_raises(IndexError):
+        tab_ui.remove_element(3, ui.TextBlock2D())
+
+    with npt.assert_raises(IndexError):
+        tab_ui.update_element(3, ui.TextBlock2D(), (0.5, 0.5, 0.5))
+
+    npt.assert_equal("Tab 1", tab_ui.tabs[0].title)
+    npt.assert_equal("Tab 2", tab_ui.tabs[1].title)
+    npt.assert_equal("Tab 3", tab_ui.tabs[2].title)
+
+    npt.assert_equal(3, tab_ui.nb_tabs)
+
+    collapses = itertools.count()
+    changes = itertools.count()
+
+    def collapse(tab_ui):
+        if tab_ui.collapsed:
+            next(collapses)
+
+    def tab_change(tab_ui):
+        next(changes)
+
+    tab_ui.on_change = tab_change
+    tab_ui.on_collapse = collapse
+
+    event_counter = EventCounter()
+    event_counter.monitor(tab_ui)
+
+    current_size = (800, 800)
+    show_manager = window.ShowManager(
+        size=current_size, title="Tab UI Test")
+    show_manager.scene.add(tab_ui)
+
+    if interactive:
+        show_manager.record_events_to_file(recording_filename)
+        print(list(event_counter.events_counts.items()))
+        event_counter.save(expected_events_counts_filename)
+    else:
+        show_manager.play_events_from_file(recording_filename)
+        expected = EventCounter.load(expected_events_counts_filename)
+        event_counter.check_counts(expected)
+
+    npt.assert_equal(0, tab_ui.active_tab_idx)
+    npt.assert_equal(11, next(changes))
+    npt.assert_equal(5, next(collapses))
+
+
 def test_grid_ui(interactive=False):
     vol1 = np.zeros((100, 100, 100))
     vol1[25:75, 25:75, 25:75] = 100
@@ -1382,3 +1566,23 @@ def test_frame_rate_and_anti_aliasing():
     assert_greater(np.sum(arr2), 0)
     if not skip_osx:
         assert_greater(np.median(frh.fpss), 0)
+
+
+def test_clip_overflow():
+    text = ui.TextBlock2D(text="", position=(50, 50), color=(1, 0, 0))
+    rectangle = ui.Rectangle2D(position=(50, 50), size=(100, 50))
+
+    sm = window.ShowManager()
+    sm.scene.add(rectangle, text)
+
+    text.message = "Hello"
+    ui.clip_overflow(text, rectangle.size[0])
+    npt.assert_equal("Hello", text.message)
+
+    text.message = "Hello wassup"
+    ui.clip_overflow(text, rectangle.size[0])
+    npt.assert_equal("Hello was...", text.message)
+
+    text.message = "A very very long message to clip text overflow"
+    ui.clip_overflow(text, rectangle.size[0])
+    npt.assert_equal("A very ve...", text.message)

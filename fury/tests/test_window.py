@@ -5,7 +5,7 @@ import numpy as np
 import numpy.testing as npt
 import pytest
 from fury import actor, window, io
-from fury.testing import captured_output, assert_less_equal
+from fury.testing import captured_output, assert_less_equal, assert_greater
 from fury.decorators import skip_osx, skip_win
 
 
@@ -79,56 +79,6 @@ def test_scene():
                      'Focal Point (0.00, 0.00, 0.00)\n   '
                      'View Up (0.00, 1.00, 0.00)')
     npt.assert_equal(err.getvalue().strip(), '')
-
-
-def test_deprecated():
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always", DeprecationWarning)
-        scene = window.Renderer()
-        npt.assert_equal(scene.size(), (0, 0))
-        npt.assert_equal(len(w), 1)
-        npt.assert_(issubclass(w[-1].category, DeprecationWarning))
-
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always", DeprecationWarning)
-        scene = window.renderer(background=(0.0, 1.0, 0.0))
-        npt.assert_equal(scene.size(), (0, 0))
-        npt.assert_equal(len(w), 1)
-        npt.assert_(issubclass(w[-1].category, DeprecationWarning))
-
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always", DeprecationWarning)
-        scene = window.ren()
-        npt.assert_equal(scene.size(), (0, 0))
-        npt.assert_equal(len(w), 2)
-        npt.assert_(issubclass(w[-1].category, DeprecationWarning))
-
-    scene = window.Scene()
-    with warnings.catch_warnings(record=True) as l_warn:
-        warnings.simplefilter("always", DeprecationWarning)
-        obj = actor.axes(scale=(1, 1, 1))
-        window.add(scene, obj)
-        arr = window.snapshot(scene)
-        report = window.analyze_snapshot(arr)
-        npt.assert_equal(report.objects, 3)
-        window.rm(scene, obj)
-        arr = window.snapshot(scene)
-        report = window.analyze_snapshot(arr)
-        npt.assert_equal(report.objects, 0)
-        window.add(scene, obj)
-        window.rm_all(scene)
-        arr = window.snapshot(scene)
-        report = window.analyze_snapshot(arr)
-        npt.assert_equal(report.objects, 0)
-        window.add(scene, obj)
-        window.clear(scene)
-        report = window.analyze_renderer(scene)
-        npt.assert_equal(report.actors, 0)
-        deprecated_warns = [w for w in l_warn
-                            if issubclass(w.category,
-                                          DeprecationWarning)]
-        npt.assert_equal(len(deprecated_warns), 7)
-        npt.assert_(issubclass(l_warn[-1].category, DeprecationWarning))
 
 
 def test_active_camera():
@@ -275,7 +225,7 @@ def test_order_transparent():
     # when order transparency is True green should be weaker
     green_weaker = arr[150, 150, 1]
 
-    npt.assert_equal(green_stronger > green_weaker, True)
+    assert_greater(green_stronger, green_weaker)
 
 
 @pytest.mark.skipif(skip_win, reason="This test does not work on Windows."

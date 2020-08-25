@@ -303,28 +303,46 @@ def test_winding_order():
                      utils.fix_winding_order(vertices, triangles))
 
 
-def test_vertices_from_actor():
+def test_vertices_from_actor(interactive=False):
 
-    my_vertices = np.array([[2.5, -0.5, 0.], [1.5, -0.5, 0.],
-                            [1.5, 0.5, 0.], [2.5, 0.5, 0.],
-                            [1., 1., 0.], [-1., 1., 0.],
-                            [-1., 3., 0.], [1., 3., 0.],
-                            [0.5, -0.5, 0.], [-0.5, -0.5, 0.],
-                            [-0.5, 0.5, 0.], [0.5, 0.5, 0.]])
+    expected = np.array([[1.5, -0.5, 0.],
+                         [1.5, 0.5, 0],
+                         [2.5, 0.5, 0],
+                         [2.5, -0.5, 0],
+                         [-1, 1, 0],
+                         [-1, 3, 0],
+                         [1, 3, 0],
+                         [1, 1, 0],
+                         [-0.5, -0.5, 0],
+                         [-0.5, 0.5, 0],
+                         [0.5, 0.5, 0],
+                         [0.5, -0.5, 0]])
     centers = np.array([[2, 0, 0], [0, 2, 0], [0, 0, 0]])
     colors = np.array([[255, 0, 0], [0, 255, 0], [0, 0, 255]])
-    scale = [1, 2, 1]
+    scales = [1, 2, 1]
     verts, faces = fp.prim_square()
     res = fp.repeat_primitive(verts, faces, centers=centers, colors=colors,
-                              scale=scale)
+                              scales=scales)
 
     big_verts = res[0]
     big_faces = res[1]
     big_colors = res[2]
     actr = get_actor_from_primitive(big_verts, big_faces, big_colors)
     actr.GetProperty().BackfaceCullingOff()
+    if interactive:
+        scene = window.Scene()
+        scene.add(actor.axes())
+        scene.add(actr)
+        window.show(scene)
     res_vertices = vertices_from_actor(actr)
-    npt.assert_array_almost_equal(my_vertices, res_vertices)
+    npt.assert_array_almost_equal(expected, res_vertices)
+
+
+def test_get_actor_from_primitive():
+    vertices, triangles = fp.prim_frustum()
+    colors = np.array([1, 0, 0])
+    npt.assert_raises(ValueError, get_actor_from_primitive, vertices,
+                      triangles, colors=colors)
 
 
 def test_compute_bounds():
