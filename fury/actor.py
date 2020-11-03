@@ -233,6 +233,7 @@ def slicer(data, affine=None, value_range=None, opacity=1.,
             lut = colormap_lookup_table((r1, r2), (0, 0), (0, 0), (0, 1))
 
         plane_colors = vtk.vtkImageMapToColors()
+        plane_colors.SetOutputFormatToRGB()
         plane_colors.SetLookupTable(lut)
         plane_colors.SetInputConnection(image_resliced.GetOutputPort())
         plane_colors.Update()
@@ -1960,6 +1961,7 @@ def billboard(centers, colors=(0, 1, 0), scales=1, vs_dec=None, vs_impl=None,
     big_verts, big_faces, big_colors, big_centers = res
 
     sq_actor = get_actor_from_primitive(big_verts, big_faces, big_colors)
+    sq_actor.GetMapper().SetVBOShiftScaleMethod(False)
     sq_actor.GetProperty().BackfaceCullingOff()
     attribute_to_actor(sq_actor, big_centers, 'center')
 
@@ -2563,6 +2565,7 @@ def sdf(centers, directions=(1, 0, 0), colors=(1, 0, 0), primitives='torus',
 
     rep_verts, rep_faces, rep_colors, rep_centers = repeated
     box_actor = get_actor_from_primitive(rep_verts, rep_faces, rep_colors)
+    box_actor.GetMapper().SetVBOShiftScaleMethod(False)
 
     if isinstance(primitives,  (list, tuple, np.ndarray)):
         primlist = [prims[prim] for prim in primitives]
