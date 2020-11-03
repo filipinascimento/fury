@@ -23,12 +23,52 @@ from fury import actor, window,ui, colormap as cmap
 import fury.primitive as fp
 from fury.utils import (get_actor_from_polydata, numpy_to_vtk_colors,
                         set_polydata_triangles, set_polydata_vertices,
-                        set_polydata_colors)
+                        set_polydata_colors,colors_from_actor,
+                        vertices_from_actor,update_actor)
 
 import helios
 import xnetwork
 import igraph as ig
 import numpy as np
+
+
+
+def vtk_vertices_from_actor(actor):
+    """Access to vtk vertices from actor.
+
+    Parameters
+    ----------
+    actor : actor
+
+    Returns
+    -------
+    vertices : vtkarray
+
+    """
+    return actor.GetMapper().GetInput().GetPoints().GetData()
+
+
+def vtk_array_from_actor(actor, array_name):
+    """Access vtk array from actor which uses polydata.
+
+    Parameters
+    ----------
+    actor : actor
+
+    Returns
+    -------
+    output : vtkarray
+
+    """
+    vtk_array = \
+        actor.GetMapper().GetInput().GetPointData().GetArray(array_name)
+    if vtk_array is None:
+        return None
+
+    return vtk_array #numpy_support.vtk_to_numpy(vtk_colors)
+
+
+
 
 ###############################################################################
 # This demo has two modes.
@@ -62,7 +102,7 @@ import numpy as np
 
 import networkx as nx
 vertices_count = 5000
-view_size = 10
+view_size = 300
 
 filename = "/Users/filipi/Dropbox/Projects/CDT-Visualization/Networks/Content/WS_10000_10_001-major.xnet"
 # filename = "/Users/filipi/Dropbox/Software/Networks 3D Lite/Networks 3D/networks/Wikipedia.xnet"
@@ -192,6 +232,7 @@ polydata.GetPointData().AddArray(vtk_centers)
 sphere_actor = get_actor_from_polydata(polydata)
 # sphere_actor = actor.square(centers)
 sphere_actor.GetProperty().BackfaceCullingOff()
+sphere_actor.PickableOn()
 
 # scene.add(canvas_actor)
 
@@ -349,13 +390,6 @@ mapper.AddObserver(vtk.vtkCommand.UpdateShaderEvent, vtk_shader_callback)
 
 
 # sphere_geometry = numpy_support.vtk_to_numpy(sphere_actor.GetMapper().GetInput().GetPoints().GetData())
-centers_geometry = numpy_support.vtk_to_numpy(vtk_centers)
-centers_geometryOrig = np.array(numpy_support.vtk_to_numpy(vtk_centers))
-centers_length = centers_geometry.shape[0] / positions.shape[0]
-
-verts_geometry = numpy_support.vtk_to_numpy(vtk_verts)
-verts_geometryOrig = np.array(numpy_support.vtk_to_numpy(vtk_verts))
-verts_length = verts_geometry.shape[0] / positions.shape[0]
 
 # global picker
 
@@ -420,7 +454,7 @@ def new_layout_timer(showm, edges_list, vertices_count,
     #     sphere_actor.GetMapper().GetInput().GetPoints().GetData()))
     # geometry_length = sphere_geometry.shape[0] / vertices_count
 
-    # threadID = helios.startAsyncLayout(edgesArray,positions,velocities);
+    threadID = helios.startAsyncLayout(edgesArray,positions,velocities);
     def iterateHelios(iterationCount):
         for i in range(iterationCount):
             helios.layout(edgesArray,positions,velocities,0.001,0.1,0.02);
@@ -438,6 +472,8 @@ def new_layout_timer(showm, edges_list, vertices_count,
         if(counter%100==0):
             print(np.average(framesPerSecond))
             framesPerSecond=[]
+            print("Saving: %s"%("viz_animated_networks_%d.png"%counter))
+            window.record(showm.scene, size=(4096, 4096),out_path="viz_animated_networks_%d.png"%counter)
         # spheres_positions = numpy_support.vtk_to_numpy(
         #     sphere_actor.GetMapper().GetInput().GetPoints().GetData())
         # spheres_positions[:] = sphere_geometry + \
@@ -449,7 +485,7 @@ def new_layout_timer(showm, edges_list, vertices_count,
             np.repeat(positions, centers_length, axis=0)
 
         verts_geometry[:] = verts_geometryOrig + \
-            np.repeat(positions, verts_length, axis=0)
+           np.repeat(positions, verts_length, axis=0)
             
         edges_positions = numpy_support.vtk_to_numpy(
             lines_actor.GetMapper().GetInput().GetPoints().GetData())
@@ -458,16 +494,19 @@ def new_layout_timer(showm, edges_list, vertices_count,
 
         lines_actor.GetMapper().GetInput().GetPoints().GetData().Modified()
         lines_actor.GetMapper().GetInput().ComputeBounds()
-        vtk_verts.Modified()
-        vtk_centers.Modified()
-        sphere_actor.GetMapper().GetInput().GetPoints().GetData().Modified()
-        sphere_actor.GetMapper().GetInput().ComputeBounds()
+        vtk_verts_geometry.Modified()
+        vtk_centers_geometry.Modified()
+        update_actor(nodes_actor)
+        nodes_actor.GetMapper().GetInput().GetPoints().GetData().Modified()
+        nodes_actor.GetMapper().GetInput().ComputeBounds()
         # showm.scene.reset_camera()
         showm.scene.ResetCameraClippingRange()
         showm.scene.azimuth(0.05)
         # showm.scene.yaw(0.05)
         showm.render()
 
+        selector.AreaPick(100,100,120,120,showm.scene)
+        print(selector.GetDataSet())
         if counter >= max_iterations:
             showm.exit()
     return _timer
@@ -485,10 +524,138 @@ text_block.color = (1, 1, 1)
 
 camera = scene.camera()
 
-# scene.add(lines_actor)
+
+
+
+
+
+
+fs_dec = \
+    """
+    uniform mat4 MCDCMatrix;
+    uniform mat4 MCVCMatrix;
+
+
+    float sdRoundBox( vec3 p, vec3 b, float r )
+    {
+        vec3 q = abs(p) - b;
+        return length(max(q,0.0)) + min(max(q.x,max(q.y,q.z)),0.0) - r;
+    }
+
+    float sdEllipsoid( vec3 p, vec3 r )
+    {
+    float k0 = length(p/r);
+    float k1 = length(p/(r*r));
+    return k0*(k0-1.0)/k1;
+    }
+    float sdCylinder(vec3 p, float h, float r)
+    {
+        vec2 d = abs(vec2(length(p.xz),p.y)) - vec2(h,r);
+        return min(max(d.x,d.y),0.0) + length(max(d,0.0));
+    }
+    float sdSphere(vec3 pos, float r)
+    {
+        float d = length(pos) - r;
+
+        return d;
+    }
+    float map( in vec3 pos)
+    {
+        float d = sdSphere(pos-0.5, .2);
+        float d1 = sdCylinder(pos+0.5, 0.05, .5);
+        float d2 = sdEllipsoid(pos + vec3(-0.5,0.5,0), vec3(0.2,0.3,0.5));
+        float d3 = sdRoundBox(pos + vec3(0.5,-0.5,0), vec3(0.2,0.1,0.3), .05);
+
+
+        //.xy
+
+        return min(min(min(d, d1), d2), d3);
+    }
+
+    vec3 calcNormal( in vec3 pos )
+    {
+        vec2 e = vec2(0.0001,0.0);
+        return normalize( vec3(map(pos + e.xyy) - map(pos - e.xyy ),
+                                map(pos + e.yxy) - map(pos - e.yxy),
+                                map(pos + e.yyx) - map(pos - e.yyx)
+                                )
+                        );
+    }
+
+    float castRay(in vec3 ro, vec3 rd)
+    {
+        float t = 0.0;
+        for(int i=0; i < 100; i++)
+        {
+            vec3 pos = ro + t * rd;
+            vec3 nor = calcNormal(pos);
+
+            float h = map(pos);
+            if (h < 0.001) break;
+
+            t += h;
+            if (t > 20.0) break;
+        }
+        return t;
+    }
+    """
+
+fake_sphere = \
+"""
+
+vec3 uu = vec3(MCVCMatrix[0][0], MCVCMatrix[1][0], MCVCMatrix[2][0]); // camera right
+vec3 vv = vec3(MCVCMatrix[0][1], MCVCMatrix[1][1], MCVCMatrix[2][1]); //  camera up
+vec3 ww = vec3(MCVCMatrix[0][2], MCVCMatrix[1][2], MCVCMatrix[2][2]); // camera direction
+vec3 ro = MCVCMatrix[3].xyz * mat3(MCVCMatrix);  // camera position
+
+// create view ray
+vec3 rd = normalize( point.x*-uu + point.y*-vv + 7*ww);
+vec3 col = vec3(0.0);
+
+float len = length(point);
+float radius = 1.;
+if(len > radius)
+    {discard;}
+
+//err, lightColor0 vertexColorVSOutput normalVCVSOutput, ambientIntensity; diffuseIntensity;specularIntensity;specularColorUniform;
+// float c = len;
+// fragOutput0 =  vec4(c,c,c, 1);
+
+
+vec3 normalizedPoint = normalize(vec3(point.xy, sqrt(1. - len)));
+vec3 direction = normalize(vec3(1., 1., 1.));
+float ddf = max(0, dot(direction, normalizedPoint));
+float ssf = pow(ddf, 24);
+fragOutput0 = vec4(max(df * color, ssf * vec3(1)), 1);
+"""
+
+
+billboard_actor = actor.billboard(centers,
+                                    colors=colors,
+                                    scales=1.0,
+                                    fs_dec=fs_dec,
+                                    fs_impl=fake_sphere
+                                    )
+
+nodes_actor = billboard_actor
+vtk_centers_geometry = vtk_array_from_actor(nodes_actor,array_name="center")
+centers_geometry = numpy_support.vtk_to_numpy(vtk_centers_geometry)
+centers_geometryOrig = np.array(centers_geometry)
+centers_length = centers_geometry.shape[0] / positions.shape[0]
+
+
+# verts_geometry = numpy_support.vtk_to_numpy(vtk_verts)
+vtk_verts_geometry = vtk_vertices_from_actor(nodes_actor)
+verts_geometry = numpy_support.vtk_to_numpy(vtk_verts_geometry)
+verts_geometryOrig = np.array(verts_geometry)
+verts_length = verts_geometry.shape[0] / positions.shape[0]
+# print(verts_geometryOrig)
+scene.add(lines_actor)
 # scene.add(sphere_actor)
-boxActor = actor.box(centers=np.array([[0,0,0]]),size=(1000,1000,1000),colors=(1,0,0,0.2))
-scene.add(boxActor)
+# boxActor = actor.box(centers=np.array([[0,0,0]]),scales=(1000,1000,1000),colors=(1,0,0,0.2))
+# scene.add(boxActor)
+scene.add(nodes_actor)
+# vertices_from_actor()
 
 ###############################################################################
 # The final step ! Visualize the result of our creation! Also, we need to move
@@ -497,14 +664,45 @@ scene.add(boxActor)
 # more time.
 
 showm = window.ShowManager(scene, reset_camera=False, size=(
-    1980, 1920), order_transparent=False, multi_samples=2,)
+    1200, 1100), order_transparent=False, multi_samples=2,)
 
 
 showm.initialize()
 
 # scenePicker.SetRenderer(showm.scene)
 
+selector = vtk.vtkAreaPicker()
+selector.SetRenderer(showm.scene)
+iren = showm.iren
+iren.SetPicker(selector)
 scene.set_camera(position=(0, 0, -750))
+
+
+# double x0 = renderer->GetPickX1();
+#   63   double y0 = renderer->GetPickY1();
+#   64   double x1 = renderer->GetPickX2();
+#   65   double y1 = renderer->GetPickY2();
+#   66 
+#   67   sel->SetArea(
+#   68     static_cast<int>(x0), static_cast<int>(y0), static_cast<int>(x1), static_cast<int>(y1));
+#   69   vtkSmartPointer<vtkSelection> res;
+#   70   res.TakeReference(sel->Select());
+#   71   if (!res)
+#   72   {
+#   73     cerr << "Selection not supported." << endl;
+#   74     return;
+#   75   }
+#   76 
+#   77   /*
+#   78   cerr << "x0 " << x0 << " y0 " << y0 << "\t";
+#   79   cerr << "x1 " << x1 << " y1 " << y1 << endl;
+#   80   vtkIdTypeArray *a = vtkIdTypeArray::New();
+#   81   sel->GetSelectedIds(a);
+#   82   cerr << "numhits = " << a->GetNumberOfTuples() << endl;
+#   83   sel->PrintSelectedIds(a);
+#   84   a->Delete();
+#   85   */
+
 
 timer_callback = new_layout_timer(
     showm, edges, vertices_count,
@@ -518,8 +716,6 @@ try:
 
     showm.start()
 
-    window.record(showm.scene, size=(900, 768),
-                out_path="viz_animated_networks.png")
 
 except KeyboardInterrupt:
     helios.stopAsyncLayout(threadID)

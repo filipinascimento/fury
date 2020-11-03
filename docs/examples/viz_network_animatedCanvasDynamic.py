@@ -59,38 +59,28 @@ import numpy as np
 ###############################################################################
 # Generate a geographic random network, requires networkx package (mode 0)
 
-from collections import Counter
+
 import networkx as nx
+import igraph as ig
 vertices_count = 5000
 view_size = 100
 
-# filename = "/Users/filipi/Dropbox/Projects/CDT-Visualization/Networks/Content/WS_10000_10_001-major.xnet"
+filename = "/Users/filipi/Dropbox/Projects/CDT-Visualization/Networks/Content/WS_10000_10_001-major.xnet"
 # filename = "/Users/filipi/Dropbox/Software/Networks 3D Lite/Networks 3D/networks/Wikipedia.xnet"
 # filename = "/Users/filipi/Downloads/wax_5000_6_0.xnet"
 # network = xnetwork.xnet2igraph("/Volumes/GoogleDrive/My Drive/Remote/Archived/DesktopOLD/Se eu tivesse mesa limpa/Networks/WS_2864_6.xnet")
-filename = "/Users/filipi/Dropbox/Projects/FieldsAndAuthorship/Results/Networks/wosAPS.xnet"
-network = xnetwork.xnet2igraph(filename)
-print(network.vertex_attributes())
-network.delete_vertices(np.where(np.array(network.vs["Times Cited"])<20)[0])
 
+# network = xnetwork.xnet2igraph(filename)
+network = ig.Graph.Lattice([70,70],1, directed=False, mutual=False, circular=False)
 
-propertyName = "Cluster Index"
-colorValues = {key:index for index,(key,size) in enumerate(Counter(network.vs[propertyName]).most_common())}
-colormap = cmap.cm.get_cmap('tab20', 20)
-colorProperty = [colormap(colorValues[value]) if value<10 else (0.4,0.4,0.4,1.0) for value in network.vs[propertyName]]
-okEdges = np.random.choice(network.vcount(),size=int(0.5*network.vcount()),replace=False)
 edges = np.ascontiguousarray(network.get_edgelist(),dtype=np.uint64)
-print(edges.shape)
-edges = np.ascontiguousarray(edges[okEdges,:],dtype=np.uint64)
-
-print(edges.shape)
+print(len(edges))
 vertices_count = network.vcount()
 
 print("Processing...")
-# positions = view_size * \
-#     np.random.random((vertices_count, 3)) - view_size / 2.0
+positions = view_size * \
+    np.random.random((vertices_count, 3)) - view_size / 2.0
 
-positions = np.array(network.vs["Position"])
 positions = np.ascontiguousarray(positions,dtype=np.float32);
 
 ###############################################################################
@@ -107,18 +97,17 @@ positions = np.ascontiguousarray(positions,dtype=np.float32);
 
 # colors = np.array([category_colors[category2index[category]]
 #                 for category in categories])
-degrees = np.array(network.degree())
+degrees = np.exp(np.array(network.degree()))
 minDegree = np.min(degrees)
 maxDegree = np.max(degrees)
 coeff = (degrees-minDegree)/(maxDegree-minDegree)
-colors = np.array(cmap.cm.inferno(np.arange(0,vertices_count)/(vertices_count-1)))
-colors = np.array(colorProperty)
+colors = np.array(cmap.cm.plasma(np.arange(0,vertices_count)/(vertices_count-1)))
 # colors = np.array(cmap.cm.inferno(np.power(coeff,0.1)))
 # colors = np.ones(colors.shape)
 ###############################################################################
 # We define our node size
 
-radii = 1 + np.random.rand(len(positions))
+radii = 1 + np.random.rand(len(positions))*4
 
 ###############################################################################
 # Lets create our edges now. They will indicate a citation between two nodes.
@@ -145,12 +134,11 @@ centers = np.zeros(positions.shape) # np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]]
 
 radius = np.ones(n_points)
 
-
 polydata = vtk.vtkPolyData()
 
 verts, faces = fp.prim_square()
 
-big_verts = 5*np.tile(verts, (centers.shape[0], 1))
+big_verts = 50*np.tile(verts, (centers.shape[0], 1))
 big_cents = np.repeat(centers, verts.shape[0], axis=0)
 
 big_verts += big_cents
@@ -210,8 +198,8 @@ polydata.GetPointData().AddArray(vtk_centers)
 sphere_actor = get_actor_from_polydata(polydata)
 sphere_actor.GetProperty().BackfaceCullingOff()
 sphere_actor.GetMapper().SetVBOShiftScaleMethod(False)
-sphere_actor.GetProperty().SetAmbient(1.0);
-sphere_actor.GetProperty().SetDiffuse(0.1);
+# sphere_actor.GetProperty().SetAmbient(1.0);
+# sphere_actor.GetProperty().SetDiffuse(0.1);
 # scene.add(canvas_actor)
 
 mapper = sphere_actor.GetMapper()
@@ -276,7 +264,7 @@ mapper.AddShaderReplacement(
 mapper.AddShaderReplacement(
     vtk.vtkShader.Fragment,
     "//VTK::Light::Impl",
-    False,
+    True,
     """
     // Renaming variables passed from the Vertex Shader
     vec3 color = vertexColorVSOutput.rgb;
@@ -305,15 +293,9 @@ mapper.AddShaderReplacement(
         discard;
     vec3 normalizedPoint = normalize(vec3(point.xy, sqrt(1. - len)));
     vec3 direction = normalize(vec3(1., 1., 1.));
-    float df2 = max(0, dot(direction, normalizedPoint));
-    float sf2 = pow(df2, 90);
-    fragOutput0 = vec4(max((df2+0.3) * color, sf2 * vec3(1)), 1);
-
-    // fragOutput1 = vec4(vertexVC.xyz, 1.0);
-    // fragOutput2 = vec4(normalVCVSOutput, 1.0);
-
-
-
+    float df = max(0, dot(direction, normalizedPoint));
+    float sf = pow(df, 24);
+    fragOutput0 = vec4(max(df * color, sf * vec3(1)), 1);
     """,
     False
 )
@@ -413,7 +395,7 @@ verts_length = verts_geometry.shape[0] / positions.shape[0]
 lines_actor = actor.line(np.zeros((len(edges), 2, 3)),
                         colors=edges_colors, lod=False,
                         fake_tube=False, linewidth=3,
-                        opacity=0.1
+                        opacity=0.6
                         )
 
 ###############################################################################
@@ -445,10 +427,10 @@ def new_layout_timer(showm, edges_list, vertices_count,
     #     sphere_actor.GetMapper().GetInput().GetPoints().GetData()))
     # geometry_length = sphere_geometry.shape[0] / vertices_count
 
-    # threadID = helios.startAsyncLayout(edgesArray,positions,velocities,0.001,0.75,0.05);
+    threadID = helios.startAsyncLayout(edgesArray,positions,velocities,0.001,0.75,0.05);
     def iterateHelios(iterationCount):
         for i in range(iterationCount):
-            helios.layout(edgesArray,positions,velocities,0.001,0.1,0.02);
+            helios.layout(edgesArray,positions,velocities,0.002,0.2,0.1);
         # t1 = threading.Thread(target=heliosLayout, args=(iterationCount,edgesArray,pos,velocities)) 
         # t1.start()
         # t1.join()
@@ -460,9 +442,18 @@ def new_layout_timer(showm, edges_list, vertices_count,
         nonlocal counter,framesPerSecond
         counter += 1
         framesPerSecond.append(scene.frame_rate)
-        if(counter%1000==0):
+        if(counter%100==0):
             print(np.average(framesPerSecond))
             framesPerSecond=[]
+        if(counter>200):
+            if(counter%20==0):
+                for _ in range(1):
+                    newFrom = np.random.randint(0,len(positions)-1)
+                    newTo = np.random.randint(0,len(positions)-1)
+                    edgeIndex = np.random.randint(0,len(edgesArray)-1)
+                    edgesArray[edgeIndex][0] = newFrom
+                    edgesArray[edgeIndex][1] = newTo
+            # edgesArray[counter%len(edgesArray)] = np.random.randint(0,len(edgesArray)-1) 
             # window.record(scene, out_path="WS_light_%d.png"%counter,
             # size=(4096, 4096),
             # reset_camera=False)
@@ -481,8 +472,8 @@ def new_layout_timer(showm, edges_list, vertices_count,
             
         edges_positions = numpy_support.vtk_to_numpy(
             lines_actor.GetMapper().GetInput().GetPoints().GetData())
-        edges_positions[::2] = positions[edges_list[:, 0]]
-        edges_positions[1::2] = positions[edges_list[:, 1]]
+        edges_positions[::2] = positions[edgesArray[:, 0]]
+        edges_positions[1::2] = positions[edgesArray[:, 1]]
 
         lines_actor.GetMapper().GetInput().GetPoints().GetData().Modified()
         lines_actor.GetMapper().GetInput().ComputeBounds()
@@ -491,7 +482,7 @@ def new_layout_timer(showm, edges_list, vertices_count,
         sphere_actor.GetMapper().GetInput().GetPoints().GetData().Modified()
         sphere_actor.GetMapper().GetInput().ComputeBounds()
         showm.scene.ResetCameraClippingRange()
-        showm.scene.azimuth(0.05)
+        # showm.scene.azimuth(0.05)
         # showm.scene.yaw(0.05)
         showm.render()
 
@@ -550,14 +541,14 @@ scene.set_camera(position=(0, 0, -900))
 
 timer_callback = new_layout_timer(
     showm, edges, vertices_count,
-    max_iterations=2000,
+    max_iterations=10000,
     vertex_initial_positions=positions)
 
 
 # Run every 16 milliseconds
 try:
     print(window)
-    showm.add_timer_callback(True, 200, timer_callback)
+    showm.add_timer_callback(True, 16, timer_callback)
     
     showm.start()
 
