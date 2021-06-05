@@ -3,7 +3,7 @@ import json
 import os
 import numpy as np
 from functools import partial
-
+import aiohttp
 from aiohttp import web
 
 from aiortc import RTCPeerConnection, RTCSessionDescription
@@ -29,10 +29,11 @@ async def offer(request, **kwargs):
     video = kwargs['video']
     if("broadcast" in kwargs and kwargs["broadcast"]):
         video = MediaRelay().subscribe(video)
-    
+
     params = await request.json()
-    #print(params["sdp"])
-    offer = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
+
+    offer = RTCSessionDescription(
+        sdp=params["sdp"], type=params["type"])
 
     pc = RTCPeerConnection()
     pcs.add(pc)
@@ -60,37 +61,51 @@ async def offer(request, **kwargs):
     return web.Response(
         content_type="application/json",
         text=json.dumps(
-            {"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}
+            {
+                "sdp": pc.localDescription.sdp,
+                "type": pc.localDescription.type}
         ),
     )
+
+
+def set_weel(data, circular_queue):
+    deltaY = float(data['deltaY'])
+
+    ok = circular_queue.enqueue(
+        np.array([1, deltaY, 0, 0, 0, 0], dtype='float64'))
+
+    return ok
 
 
 async def mouse_weel(request, **kwargs):
 
     params = await request.json()
-    deltaY = float(params['deltaY'])
-    circular_queue = kwargs['circular_queue']
-    ok = circular_queue.enqueue(
-        np.array([1, deltaY, 0, 0, 0, 0], dtype='float64'))
+    ok = set_weel(params, kwargs['circular_queue'])
     return web.Response(
         content_type="application/json",
         text=json.dumps(
             {'was_inserted': ok}
         ),
     )
+
+
+def set_mouse(data, circular_queue):
+    x = float(data['x'])
+    y = float(data['y'])
+    ctrl_key = int(data['ctrlKey'])
+    shift_key = int(data['shiftKey'])
+
+    circular_queue = circular_queue
+    ok = circular_queue.enqueue(
+        np.array([2, 0, x, y,  ctrl_key, shift_key], dtype='float64'))
+
+    return ok
 
 
 async def mouse_move(request, **kwargs):
 
     params = await request.json()
-    x = float(params['x'])
-    y = float(params['y'])
-    ctrl_key = int(params['ctrlKey'])
-    shift_key = int(params['shiftKey'])
-
-    circular_queue = kwargs['circular_queue']
-    ok = circular_queue.enqueue(
-        np.array([2, 0, x, y,  ctrl_key, shift_key], dtype='float64'))
+    ok = set_mouse(params, kwargs['circular_queue'])
     return web.Response(
         content_type="application/json",
         text=json.dumps(
@@ -99,15 +114,37 @@ async def mouse_move(request, **kwargs):
     )
 
 
-async def mouse_left_click(request, **kwargs):
+def set_mouse_click(data, circular_queue):
+    # mouse left click 3
+    # mouse left release 4
+    # mouse right click 7
+    # mouse right release 8
+    # mouse middle click 5
+    # mouse middle release 6
+    on = 0 if data['on'] == 1 else 1
+    ctrl = int(data['ctrlKey'])
+    shift = int(data['shiftKey'])
+    x = float(data['x'])
+    y = float(data['y'])
+    mouse_button = int(data['mouseButton'])
+    if mouse_button not in [0, 1, 2]:
+        return False
+    if ctrl not in [0, 1] or shift not in [0, 1]:
+        return False
+
+    event_id = (mouse_button + 1)*2 + on + 1
+    ok = circular_queue.enqueue(
+        np.array([event_id, 0, x, y, ctrl, shift], dtype='float64'))
+
+    return ok
+
+
+async def mouse_click(request, **kwargs):
 
     circular_queue = kwargs['circular_queue']
     params = await request.json()
     circular_queue = kwargs['circular_queue']
-    event_id = 2 if params['on'] == 1 else 3
-
-    ok = circular_queue.enqueue(
-        np.array([event_id, 0, 0, 0, 0, 0], dtype='float64'))
+    ok = set_mouse_click(params, circular_queue)
     return web.Response(
         content_type="application/json",
         text=json.dumps(
@@ -137,29 +174,68 @@ async def on_shutdown(app):
     pcs.clear()
 
 
-def get_app(RTCServer, folder=None, circular_queue=None,broadcast=True):
-    
+async def websocket_handler(request, **kwargs):
+
+    circular_queue = kwargs['circular_queue']
+    ws = web.WebSocketResponse()
+    await ws.prepare(request)
+
+    async for msg in ws:
+        if msg.type == aiohttp.WSMsgType.TEXT:
+            if msg.data == 'close':
+                await ws.close()
+            else:
+                data = json.loads(msg.data)
+                if data['type'] == 'weel':
+                    set_weel(data, circular_queue)
+                elif data['type'] == 'mouseMove':
+                    set_mouse(data, circular_queue)
+                elif data['type'] == 'mouseLeftClick':
+                    set_mouse_click(data, circular_queue)
+                # await ws.send_str(msg.data + '/answer')
+
+        elif msg.type == aiohttp.WSMsgType.ERROR:
+            print('ws connection closed with exception %s' %
+                  ws.exception())
+
+    print('websocket connection closed')
+
+    return ws
+
+
+def get_app(
+        RTCServer=None, folder=None, circular_queue=None, broadcast=True):
+
     if folder is None:
         folder = f'{os.path.dirname(__file__)}/www/'
 
     app = web.Application()
     app.on_shutdown.append(on_shutdown)
-    app.router.add_get("/", partial(index, folder=folder))
 
-    js_files = ['main.js', 'webrtc.js', 'constants.js']
-    for js in js_files:
-        app.router.add_get(
-            "/js/%s" % js, partial(javascript, folder=folder, js=js))
+    if RTCServer is not None:
+        app.router.add_get("/", partial(index, folder=folder))
 
-    app.router.add_post("/offer", partial(offer, video=RTCServer,broadcast = broadcast))
+        js_files = ['main.js', 'webrtc.js', 'constants.js']
+        for js in js_files:
+            app.router.add_get(
+                "/js/%s" % js, partial(javascript, folder=folder, js=js))
+            app.router.add_post("/offer", partial(
+                offer, video=RTCServer, broadcast=broadcast))
 
     if circular_queue is not None:
+        app.add_routes([
+            web.get(
+                '/ws',
+                partial(websocket_handler, circular_queue=circular_queue)
+            )
+        ])
+
         app.router.add_post("/mouse_weel", partial(
             mouse_weel, circular_queue=circular_queue))
         app.router.add_post("/mouse_move", partial(
             mouse_move, circular_queue=circular_queue))
-        app.router.add_post("/mouse_left_click", partial(
-            mouse_left_click, circular_queue=circular_queue))
+        app.router.add_post("/mouse_click", partial(
+            mouse_click, circular_queue=circular_queue))
 
         # app.router.add_post("/ctrl_key", partial(
         #     ctrl_key, circular_queue=circular_queue))
