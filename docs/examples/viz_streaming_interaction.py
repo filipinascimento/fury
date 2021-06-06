@@ -16,8 +16,10 @@ if __name__ == '__main__':
     max_window_size = (1920,1080)
     # 0 ms_stream means that the frame will be sent to the server
     # right after the rendering
+
     ms_interaction = 10
     ms_stream = 16
+
     # max number of interactions to be stored inside the queue
     max_queue_size = 10
     ######################################################################
